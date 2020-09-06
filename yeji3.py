@@ -169,6 +169,8 @@ def check_loan(ts_code):
         return True
     return False
 
+newstock  = []
+
 
 def check_start_day(start_info):
     strategy = get_trade_strategy()
@@ -176,6 +178,11 @@ def check_start_day(start_info):
     coef = 1
     if strategy.longshort == 'long':
         if start_info.trade_date == listdate.list_date:
+            ## TODO:: test for 688
+            if str(start_info.ts_code).startswith('688'):  # 科创板不限制涨跌停
+                print('上市日买入:', start_info.ts_code)
+                newstock.append(start_info.ts_code)
+                return True
             print('上市日买入')
             coef = 2
         if strategy.buy == 'open':
