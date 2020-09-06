@@ -15,8 +15,7 @@ def get_k_data(ts_code, start, end):
     return pd.read_sql(sql, engine)
 
 
-def get_basic_info(ts_code, start, end):
-    # # TODO
+def get_basic(ts_code, start, end):
     sql = "SELECT ts_code,close,trade_date,turnover_rate_f,volume_ratio,pe_ttm,circ_mv FROM quant.stock_basic where  ts_code ='" + ts_code + "' and trade_date between '" + start + "' and '" + end + "'"
     return pd.read_sql(sql, engine)
 
