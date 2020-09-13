@@ -1,4 +1,5 @@
 import datetime
+import time
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -90,16 +91,152 @@ def update_basic(from_date=None, end_date=None):
         from_date += datetime.timedelta(days=1)
 
         df_current = pro.daily_basic(ts_code='', trade_date=from_date.strftime('%Y%m%d'),
-                               fields='ts_code, trade_date, close,turnover_rate,turnover_rate_f,'
-                                      'volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,'
-                                      'free_share,total_mv,circ_mv')
+                                     fields='ts_code, trade_date, close,turnover_rate,turnover_rate_f,'
+                                            'volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,'
+                                            'free_share,total_mv,circ_mv')
         df_current.to_sql(name='stock_basic', con=engine, if_exists='append', index=False)
+
+
+def update_forecast(from_date=None, end_date=None):
+    if from_date is None:
+        sql = 'SELECT * FROM quant.stock_forecast order by ann_date desc limit 1'
+        result = pd.read_sql(sql, engine)
+        from_date = result.ann_date.values[0]
+    from_date = datetime.datetime.strptime(from_date, '%Y%m%d')
+
+    if end_date is None:
+        end_date = datetime.datetime.now() + datetime.timedelta(days=1)
+    else:
+        end_date = datetime.datetime.strptime(end_date, '%Y%m%d')
+    while from_date < end_date:
+        from_date += datetime.timedelta(days=1)
+
+        df_current = pro.forecast(ann_date=from_date.strftime('%Y%m%d'),
+                                  fields='ts_code,ann_date,end_date,type,p_change_min,p_change_max,net_profit_min,net_profit_min,net_profit_max,last_parent_net,first_ann_date,summary,change_reason')
+        df_current.to_sql(name='stock_forecast', con=engine, if_exists='append', index=False)
 
 
 def update_db():
     update_suspend_d()
     update_k_data()
     update_basic()
+    update_forecast()
+
+
+
+def get_forecast_to_yeji(from_date, end_date):
+    sql = "select end_date,ann_date,ts_code,type,p_change_min, p_change_max from quant.stock_forecast where (ann_date between '" + from_date + "' and '" + end_date + "') and type in ('略增','预增','扭亏') order by ann_date"
+    yj_data = pd.read_sql(sql, engine)
+    yj_data = yeji_forecast_db2df(yj_data)
+    return  yj_data
+
+def get_forecast_all(from_date, end_date):
+    sql = "select end_date,ann_date,ts_code,type,p_change_min, p_change_max from quant.stock_forecast where (end_date between '" + from_date + "' and '" + end_date + "') and ann_date>'20151231' order by ann_date"
+    yj_data = pd.read_sql(sql, engine)
+    yj_data = yeji_forecast_db2df(yj_data)
+    return  yj_data
+
+def yeji_forecast_db2df(yj_data):
+    yj_data = yj_data.rename(
+        columns={'end_date': 'date', 'ts_code': 'instrument', 'ann_date': 'ndate', 'type': 'forecasttype',
+                 'p_change_min': 'increasel', 'p_change_max': 'increaset'})
+    yj_data.loc[:, 'zfpx'] = (yj_data.loc[:, 'increasel'] + yj_data.loc[:, 'increaset']) / 2
+    yj_data['hymc'] = ''
+
+    yj_data['instrument'] = yj_data['instrument'] + 'A'
+    yj_data['forecast'] = 'increase'
+    order = ['date', 'ndate', 'instrument', 'hymc', 'forecast', 'forecasttype',
+             'increasel', 'increaset', 'zfpx']
+
+    def function(x):
+        def tran_dateformat(base_date):
+            if str(base_date).__contains__('-'):
+                date_str = base_date
+            else:
+                date = datetime.datetime.strptime(base_date, '%Y%m%d')
+                date_str = date.strftime('%Y-%m-%d').__str__()
+            return date_str
+
+        return tran_dateformat(x)
+
+    yj_data['date'] = yj_data['date'].apply(function)
+    yj_data['ndate'] = yj_data['ndate'].apply(function)
+    yj_data = yj_data[order]
+    return yj_data
+
+
+def check_forecast():
+    sql = 'SELECT * FROM quant.stock_forecast order by ann_date desc limit 1'
+    result = pd.read_sql(sql, engine)
+    nearest_day = result.ann_date.values[0]
+
+    pass
+
+
+def update_forecast_his():
+    diff_db = pd.read_csv('../data/temp/diff_db.csv', index_col=0)
+    for index, item in diff_db.iterrows():
+        db_dataframe = pd.read_sql("select * from quant.stock_forecast where ann_date ='" + str(index) + "'",engine)
+        db_len = len(db_dataframe)
+
+        try:
+            ts_dataframe = pro.forecast(ann_date=str(index),
+                                        fields='ts_code,ann_date,end_date,type,p_change_min,p_change_max,net_profit_min,net_profit_min,net_profit_max,last_parent_net,first_ann_date,summary,change_reason')
+
+            if len(ts_dataframe) == item.ts_len:
+                if db_len == len(ts_dataframe):
+                    print('已一致:%s,%d,%d' % (index, len(ts_dataframe), db_len))
+                    continue
+                del_sql = "delete from quant.stock_forecast where ann_date ='" + str(index) + "'"
+                engine.execute(del_sql)
+                ts_dataframe.to_sql(name='stock_forecast', con=engine, if_exists='append', index=False)
+                print('finish:', index)
+            else:
+                print('error:%s,%d,%d' % (index, len(ts_dataframe), item.ts_len))
+        except Exception as e:
+            print(e, str(index))
+            time.sleep(60)
+            ts_dataframe = pro.forecast(ann_date=str(index),
+                                        fields='ts_code,ann_date,end_date,type,p_change_min,p_change_max,net_profit_min,net_profit_min,net_profit_max,last_parent_net,first_ann_date,summary,change_reason')
+            pass
+
+
+
+def compare_forecast(from_date=None):
+    if from_date is None:
+        from_date = datetime.datetime.now()
+    end_date = datetime.datetime.strptime('20160101', '%Y%m%d')
+    diff_dataframe = pd.DataFrame(columns=['ts_len', 'db_len'])
+    while from_date > end_date:
+        from_date -= datetime.timedelta(days=1)
+        from_date_str = from_date.strftime('%Y%m%d')
+        try:
+            ts_dataframe = pro.forecast(ann_date=from_date_str, fields='ts_code,ann_date')
+        except Exception as e:
+            print(e)
+            diff_dataframe.to_csv('../data/temp/diff_db' + datetime.datetime.now().strftime('%Y%m%d') +'.csv')
+            time.sleep(60)
+            ts_dataframe = pro.forecast(ann_date=from_date_str,
+                                        fields='ts_code,ann_date')
+            pass
+        db_dataframe = pd.read_sql("SELECT * FROM quant.stock_forecast where ann_date = '" + from_date_str + "'",
+                                   engine)
+        if len(ts_dataframe) != len(db_dataframe):
+            diff_dataframe.loc[from_date_str] = [len(ts_dataframe), len(db_dataframe)]
+
+def get_netprofit_yoy(ts_code, report_date):
+    sql = "SELECT netprofit_yoy FROM quant.stock_fina_indicator where ts_code = '"+ts_code+"' and end_date = '"+ report_date+"'"
+    netprofit_dataframe = pd.read_sql(sql,engine)
+    if len(netprofit_dataframe) == 0:
+        return None
+    return netprofit_dataframe.netprofit_yoy.values[0]
+
+def get_previous_netprofit(ts_code, report_date):
+    sql = "SELECT netprofit_yoy FROM quant.stock_fina_indicator where ts_code = '" + ts_code + "' and end_date < '" + report_date + "' order by end_date desc limit 4"
+    previous_netprofit=pd.read_sql(sql,engine)
+    return previous_netprofit
 
 if __name__ == '__main__':
-    update_basic()
+    compare_forecast()
+    # yeji = get_forecast_to_yeji('20160101','20160130')
+    # print(yeji)

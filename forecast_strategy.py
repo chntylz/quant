@@ -1,10 +1,13 @@
 import datetime
+import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import OneHotEncoder
 
+from dbutil import db2df
 from dbutil.db2df import get_k_data, get_suspend_df, get_basic
 from util import tunshare as tn
 from util import util
@@ -32,7 +35,7 @@ def trade_date_cac(base_date, days, calendar):
                 return False, None, None
             if datetime.datetime.strptime(buy_date.cal_date.values[0], '%Y%m%d') > datetime.datetime.strptime(end_date,
                                                                                                               '%Y%m%d'):
-                raise RuntimeWarning('超出end_date仍未找到卖出日')
+                # raise RuntimeWarning('超出end_date仍未找到卖出日', base_date)
                 return False, None, None
         sell_date: object = buy_date
     elif days > 0:
@@ -73,7 +76,7 @@ def trade_date_cac(base_date, days, calendar):
                 return False, None, None
             if datetime.datetime.strptime(sell_date.cal_date.values[0], '%Y%m%d') > datetime.datetime.strptime(end_date,
                                                                                                                '%Y%m%d'):
-                return False
+                return False, None, None
             if sell_date.is_open.values[0] == 1:
                 count += 1
 
@@ -132,59 +135,67 @@ def check_loan(ts_code):
 newstock = []
 
 
-def check_start_day(start_info):
-    strategy = get_trade_strategy()
-    listdate = stock_info.loc[stock_info['ts_code'] == start_info.ts_code]
+def get_price_limit(code, date):
+    listdate = stock_info.loc[stock_info['ts_code'] == code]
     if len(listdate) == 0:
         # raise RuntimeWarning('stock_info中缺少该记录!')
+        ## TODO:: 需要确定这些记录的上市时间从哪里获取
+        logging.info('stock_info中缺少该记录!', code)
         listdate = pd.DataFrame(data=['20000101'], columns=['list_date'])
     listdate = listdate.iloc[0, :]
-    coef = 1
+
+    if date == listdate.list_date:
+        if code.startswith('688'):  # 科创板不限制涨跌停
+            print('上市日买入:', code)
+            newstock.append(code)
+            return 10  # 没有涨跌幅限制
+        coef = 2  # 首次涨停跌限制为20%
+    if code.startswith('688'):  # 科创板涨跌停限制20%
+        coef = 2
+    elif code.startswith('300') and date >= '20200824':  # 20年8月24日后创业板涨跌幅变化为20%
+        coef = 2
+    else:
+        coef = 1
+    return coef
+
+
+def check_start_day(start_info):
+    strategy = get_trade_strategy()
+    code = start_info.ts_code
+    date = start_info.trade_date
+
+    coefficient = get_price_limit(code, date)
+
     if strategy.longshort == 'long':
-        if start_info.trade_date == listdate.list_date:
-            if str(start_info.ts_code).startswith('688'):  # 科创板不限制涨跌停
-                print('上市日买入:', start_info.ts_code)
-                newstock.append(start_info.ts_code)
-                return True
-            coef = 2  # 首次涨停跌限制为20%
+
         if strategy.buy == 'open':
-            if (start_info.low - start_info.pre_close) / start_info.pre_close > 0.098 * coef or (  # 全天涨停，无法买入
-                    start_info.open - start_info.pre_close) / start_info.pre_close < -0.098 * coef:  # 开盘跌停就不买了放弃本次交易
+            if (start_info.low - start_info.pre_close) / start_info.pre_close > 0.098 * coefficient or (  # 全天涨停，无法买入
+                    start_info.open - start_info.pre_close) / start_info.pre_close < -0.098 * coefficient:  # 开盘跌停就不买了放弃本次交易
                 return False
             else:
-                if coef == 2:
-                    print('上市日买入:', start_info.ts_code)
-                    newstock.append(start_info.ts_code)
                 return True
         elif strategy.buy == 'close':
-            if (start_info.close - start_info.pre_close) / start_info.pre_close > 0.098 * coef or (  # 收盘涨停 无法买入
-                    start_info.close - start_info.pre_close) / start_info.pre_close < -0.098 * coef:  # 收盘跌停就不买了，放弃本次交易
+            if (start_info.close - start_info.pre_close) / start_info.pre_close > 0.098 * coefficient or (  # 收盘涨停 无法买入
+                    start_info.close - start_info.pre_close) / start_info.pre_close < -0.098 * coefficient:  # 收盘跌停就不买了，放弃本次交易
                 return False
             else:
-                if coef == 2:
-                    print('上市日买入:', start_info.ts_code)
-                    newstock.append(start_info.ts_code)
                 return True
     elif strategy.longshort == 'short':
-        if not check_loan(start_info.ts_code):
+        if not check_loan(code):
             return False
         if strategy.buy == 'open':
-            if (start_info.high - start_info.pre_close) / start_info.pre_close < -0.098 * coef or (  # 全天跌停，无法融券卖出
-                    start_info.open - start_info.pre_close) / start_info.pre_close > 0.098 * coef:  # 开盘跌停就不买了放弃本次交易
+            if (start_info.high - start_info.pre_close) / start_info.pre_close < -0.098 * coefficient or (
+                    # 全天跌停，无法融券卖出
+                    start_info.open - start_info.pre_close) / start_info.pre_close > 0.098 * coefficient:  # 开盘跌停就不买了放弃本次交易
                 return False
             else:
-                if coef == 2:
-                    print('上市日买入:', start_info.ts_code)
-                    newstock.append(start_info.ts_code)
                 return True
         elif strategy.buy == 'close':
-            if (start_info.close - start_info.pre_close) / start_info.pre_close > 0.098 * coef or (  # 收盘涨停 放弃本次交易
-                    start_info.close - start_info.pre_close) / start_info.pre_close < -0.098 * coef:  # 收盘跌停就无法融券
+            if (start_info.close - start_info.pre_close) / start_info.pre_close > 0.098 * coefficient or (
+                    # 收盘涨停 放弃本次交易
+                    start_info.close - start_info.pre_close) / start_info.pre_close < -0.098 * coefficient:  # 收盘跌停就无法融券
                 return False
             else:
-                if coef == 2:
-                    print('上市日买入:', start_info.ts_code)
-                    newstock.append(start_info.ts_code)
                 return True
 
 
@@ -237,6 +248,9 @@ def check_trade_period(dt, calendar):
         if not exist:
             return False, dt, start_info, end_info
         next_dt = get_dt_data(end_info.ts_code, next_date, next_date)
+        if next_dt is None:
+            raise RuntimeWarning('nex_dt is None:', end_info)
+            return False, dt, start_info, end_info
         while len(next_dt) == 0:
             # print('既无法买入后,下一日停牌')
             exist, begin, next_date = trade_date_cac(end, 1, calendar)
@@ -367,13 +381,9 @@ def get_std_factors(factors, result):
         new_index = result['code'].to_list()
         new_index.extend(factors.index.to_list())
         history_factors = np.append(history_factors, factors.to_numpy(), axis=0)
-        try:
-            std_factors = util.standard(history_factors)
-            if std_factors.shape[1] != len(factors_list):
-                return factors
-        except Warning as w:
-            print(w)
-            pass
+        std_factors = util.standard(history_factors)
+        if std_factors.shape[1] != len(factors_list):
+            return factors
         std_factors = pd.DataFrame(data=std_factors, columns=factors_list, index=new_index)
         std_factors['today'] = 0
         for index, item in factors.iterrows():
@@ -398,17 +408,14 @@ def get_nextday_factor(yeji_next_day, result):
         start_date1 = trade_date_cac(ndate, -5, calendar=calender)
         if start_date1[2] is None or base_date[2] is None:
             continue
-        try:
-            factors = extract_factors(ts_code=ts_code, start=start_date1[2].replace('-', '', 3),
-                                      end=base_date[2].replace('-', '', 3), ndate=ndate)
-        except Exception as e:
-            print(ts_code,start_date1,base_date)
-            pass
+        factors = extract_factors(ts_code=ts_code, start=start_date1[2].replace('-', '', 3),
+                                  end=base_date[2].replace('-', '', 3), ndate=ndate)
         if factors is None:
             continue
         factors_today.loc[ts_code] = factors
 
     std_factors = get_std_factors(factors_today, result.iloc[-100:-1, :])
+    print(std_factors)
     for index, item in std_factors.iterrows():
         scores = (factor_weights * item[factors_list]).sum()
         scores_df.loc[index] = [scores, ndate_dict.get(index), item.today]
@@ -462,7 +469,7 @@ def get_optimal_list(today_buy_candidate_list, result):
     return optimal_list, factors_today
 
 
-ratio = 5
+ratio = 12
 count = 0
 
 
@@ -545,7 +552,8 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
             available, positions_df = calc_position(tran_dateformat(buy_date), tran_dateformat(end_date),
                                                     per_ts_pos, positions_df)
             continue
-
+        elif not can_sell:
+            continue
         try:
             forecasttype = \
                 yeji_range[(yeji_range['ndate'] == buy_ts_info[0]) & (
@@ -561,12 +569,19 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
                                                     positions_df)
             if not available:
                 continue
-        net_rtn, pure_rtn, rtn, zz500_rtn = calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos,
-                                                        sell_date)
+        try:
+            net_rtn, pure_rtn, rtn, zz500_rtn = calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos,
+                                                            sell_date)
+        except AttributeError as e:
+            print(e)
+            pass
         count += 1
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+        # result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
+        #                            buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
+        #                            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     return result_trade
 
 
@@ -649,17 +664,50 @@ def sharpe_ratio(return_list):
 basic_info = pd.read_csv('./data/basic_info.csv')
 
 
+def get_netprofit_yoy(ts_code, report_date):
+    netprofit_yoy = db2df.get_netprofit_yoy(ts_code, report_date)
+    if netprofit_yoy != None:
+        return netprofit_yoy
+    else:
+        df = pro.fina_indicator(ts_code=ts_code, period=report_date)
+        if len(df) == 0:
+            return None
+        else:
+            logging.log(level=logging.WARN, msg='finance_indicator表中没有:' + ts_code)
+            return df.netprofit_yoy.values[0]
+
+
+def calc_netprofit_factor(ts_code, current_report_date, current_zf):
+    current_report_date = current_report_date.replace('-', '', 3)
+    previous_netprofit_df = db2df.get_previous_netprofit(ts_code, current_report_date)
+    len1 = len(previous_netprofit_df)
+    if len1 == 0:
+        return 0
+    weights = pd.DataFrame(columns=['weight'])
+    for i in range(len1):
+        weight = np.exp2(len1 - i)
+        weights.loc[i, 'weight'] = weight
+    previous_netprofit_df=previous_netprofit_df.to_numpy(dtype=float).reshape(1,4)
+    weights = weights.to_numpy(dtype=float)
+    weight_mean = np.dot(previous_netprofit_df, weights).sum()/weights.sum()
+    return current_zf-weight_mean
+
+
 def get_basic_info(code, start, end):
     global basic_info
     start = start.replace('-', '', 3)
     end = end.replace('-', '', 3)
     df = basic_info[
-        (basic_info['ts_code'] == code) & (basic_info['start_to_end'] == pd.to_numeric(start + end))].drop_duplicates(
+        (basic_info['ts_code'] == code) & (
+                basic_info['start_to_end'] == pd.to_numeric(start + end))].drop_duplicates(
         'trade_date')
     if df is None or len(df) == 0:
         df = get_basic(code, start, end)
         if df is None or len(df) == 0:
-            return None
+            df = pro.daily_basic(ts_code=code, start_date=start, end_date=end,
+                                 fields='ts_code,close,trade_date,turnover_rate_f,volume_ratio,pe_ttm,circ_mv')
+            if df is None or len(df) == 0:
+                return None
         df.drop_duplicates(ignore_index=True)
         df['start_to_end'] = start + end
         basic_info = basic_info.append(df)
@@ -701,9 +749,13 @@ def save_datas():
     suspend.to_csv('./data/suspend.csv', index=False)
 
 
-factors_list = ['forecast', 'zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change', 'pe_ttm',
-                'volume_ratio', 'industry', 'from_list_date', 'turnover_raten_std', 'pct_changen_std']
+factors_list = ['forecast', 'zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
+                'pe_ttm',
+                'volume_ratio', 'industry', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days']
 
+
+# factors_list = ['forecast', 'zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change', 'pe_ttm',
+#                 'volume_ratio', 'industry', 'from_list_date', 'turnover_raten_std', 'pct_changen_std']
 
 def get_factors(result_in):
     result_in = pd.concat([result_in, pd.DataFrame(
@@ -714,7 +766,7 @@ def get_factors(result_in):
         start_date1 = trade_date_cac(item.pub_date, -5, calendar=calender)
         ts_code = item.code
         if (not start_date1[0]) or (not base_date[0]):
-            print("aaa", base_date, start_date1, ts_code)
+            print("无法获取前N日的因子数据", base_date, start_date1, ts_code)
             continue
         result_in.loc[index, factors_list] = extract_factors(ts_code, start_date1[2], base_date[2], item.pub_date)
 
@@ -769,6 +821,10 @@ def extract_factors(ts_code, start, end, ndate):
                     yeji_all['instrument'] == ts_code + 'A')].iloc[
                 0, 8]
         forecast = change_forecast(forecasttype)
+        issue_date = yeji_all[(yeji_all['ndate'] == ndate) & (
+                yeji_all['instrument'] == ts_code + 'A')].date.values[0]
+        gap_days = (datetime.datetime.strptime(issue_date, '%Y-%m-%d') - datetime.datetime.strptime(ndate,
+                                                                                                    '%Y-%m-%d')).days
     except IndexError as ie:
         print('获取forecast和zfpx: ', ie, ndate, ts_code)
     pass
@@ -788,7 +844,8 @@ def extract_factors(ts_code, start, end, ndate):
         else:
             stock_list_date = stock_list_info.iloc[0]
         ## TODO:: start 改为 ndate
-        from_list_date = datetime.datetime.strptime(tran_dateformat(start), '%Y-%m-%d') - datetime.datetime.strptime(
+        from_list_date = datetime.datetime.strptime(tran_dateformat(start),
+                                                    '%Y-%m-%d') - datetime.datetime.strptime(
             stock_list_date, '%Y%m%d')
         '''
         if from_list_date.days < 0:
@@ -799,12 +856,15 @@ def extract_factors(ts_code, start, end, ndate):
             ## TODO
             return new_stock_factor(new_stock, forecast, zfpx)
         '''
-        from_list_date = np.log(from_list_date.days)
+        days = from_list_date.days
+        if days < 1:
+            days = 1
+        from_list_date = np.log(days)
     except Exception as e:
         print('上市日距离计算:', e)
         from_list_date = 200
         pass
-    df = get_basic_info(ts_code, start, end)  # 每日股票基本信息
+    df = get_basic_info(ts_code, start.replace('-', '', 3), end.replace('-', '', 3))  # 每日股票基本信息
     if df is None:
         ## TODO:: 目前对于交易日前1~5日没有交易数据的股票直接放弃(包括了前期停盘的和新股上市）
         print('Basic_info is None,', ts_code, start, end)
@@ -843,8 +903,11 @@ def extract_factors(ts_code, start, end, ndate):
         industry = 1000
         pass
 
-    factor_list = [forecast, zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm, volume_ratio,
-                   industry, from_list_date, turnover_rate5_std, pct_change5_std]
+    factor_list = [forecast, zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
+                   volume_ratio,
+                   industry, from_list_date, turnover_rate5_std, pct_change5_std, gap_days]
+    # factor_list = [forecast, zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm, volume_ratio,
+    #                industry, from_list_date, turnover_rate5_std, pct_change5_std]
     return factor_list
 
 
@@ -887,6 +950,9 @@ def calc_dynamic_factor(history_data, IC_range=90, IC_step=5, IC_times=10):
     return select_factor(IC_df)
 
 
+pca = PCA(n_components=9)
+
+
 def calc_factors(result_factor, times=None, period=90, step=45):
     IC_factors = ['pure_rtn']
     IC_factors.extend(factors_list)
@@ -901,19 +967,18 @@ def calc_factors(result_factor, times=None, period=90, step=45):
             days=period)).strftime('%Y%m%d').__str__()
         result_temp = result_factor[
             (result_factor['out_date'] <= start_date2) & (result_factor['out_date'] > end_date2)].copy()
-        if len(result_temp) == 0:
+        if len(result_temp) < 30:
             start_date2 = end_date2
             continue
         # result_temp = get_factors(result_temp)
 
         std_feature = util.standard(result_temp[IC_factors].dropna().to_numpy())
-        for i in range(1, std_feature.shape[1]):
+
+        # std_feature = pca.fit_transform(std_feature1[:, 1:])
+
+        for i in range(std_feature.shape[1]):
             columns = IC_factors
-            try:
-                iic = util.IC(std_feature[:, i], std_feature[:, 0])
-            except RuntimeWarning as w:
-                print(w)
-                pass
+            iic = util.IC(std_feature[:, i], std_feature[:, 0])
             if iic is None:
                 IC_df.loc[start_date2, columns[i]] = None
                 continue
@@ -961,8 +1026,25 @@ def update_stock_info():
     stock_infomation.to_csv('./data/stock_basic_info.csv', index=False)
 
 
+def check_not_new_stock(ts_code, base_date):
+    stock_list_date = stock_info[stock_info['ts_code'] == ts_code].list_date
+    if len(stock_list_date) == 0:
+        msg = 'ts_code不存在对应记录'
+        return False, msg
+    if stock_list_date.values[0] >= base_date:
+        msg = '上市日晚于base_date'
+        return False, msg
+    else:
+        return True, ''
+
+
 def read_result(path):
     result_fromfile = pd.read_csv(path, converters={'pub_date': str, 'out_date': str, 'in_date': str})
+    return result_fromfile
+
+
+def read_yeji(path):
+    result_fromfile = pd.read_csv(path, converters={'date': str, 'ndate': str})
     return result_fromfile
 
 
@@ -977,18 +1059,63 @@ def get_calender():
     return calender
 
 
+def draw_figure(net_date_value, total_net_date_value_b, result, total_net_date_value):
+    plt.ylabel("Return")
+    plt.xlabel("Time")
+    plt.rcParams['figure.figsize'] = (15.0, 6.0)
+    plt.rcParams['savefig.dpi'] = 300  # 图片像素
+    plt.rcParams['figure.dpi'] = 300  # 分辨率
+    plt.rcParams['figure.figsize'] = (15.0, 6.0)
+    title = 'fc::sharpe:' + str(sharpe_ratio(net_date_value - 1))
+    title = title + ' ' + 'maxdrawn:' + str(MaxDrawdown(total_net_date_value_b)) + '\n'
+    title = title + ' ' + 'selectrate:' + str(ratio)
+    title = title + ' ' + 'rtn:' + str(
+        result[-1:].sum_pure_return.values[0]) + ' compound growth rate:' + str(
+        100 * (total_net_date_value[-1] - 1)) + '%'
+    plt.title(title, fontsize=8)
+    plt.grid()
+    plt.plot(pd.DatetimeIndex(total_net_date_value.index), total_net_date_value.values)
+    # result4 = read_result('./data/result1620-10-11factors.csv')
+    # result4 = result4[50:]
+    # compare_plt(result4, '10ratio 13factor')
+    plt.show()
+
+
+def forecast_filter(y1):
+    y1 = y1[((y1.instrument < '69') & (y1.instrument > '6')) | ((y1.instrument < '09') & (y1.instrument > '0')) | (
+            (y1.instrument < '4') & (y1.instrument > '3'))]
+    y2 = y1.copy()
+    for index, item in y1.iterrows():
+        ts_code = item.instrument[0:9]
+        date = item.ndate
+        stock_list = stock_info[stock_info.ts_code == ts_code]
+        if len(stock_list) == 0:
+            logging.log(level=logging.WARN, msg='股票代码在stock_info中不存在:' + ts_code)
+            y2.drop(index, axis=0, inplace=True)
+            continue
+        stock_list_date = stock_list.list_date.values[0]
+        if stock_list_date > date:
+            y2.drop(index, axis=0, inplace=True)
+            continue
+    return y2
+
+
 if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
-    start_date = '20190617'
-    end_date = '2020904'
+    start_date = '20160121'
+    end_date = '20200904'
 
-    today = '2020904'
-    tomorrow = '20200907'
-    yeji_all = pd.read_csv('./data/result_all.csv', index_col=0)
+    trade_today = '20200903'
+    tomorrow = '20200904'
+    yeji_all = read_yeji('./data/result_all_mix.csv')
     # yeji, X_test = train_test_split(yeji_all, test_size=0.01, random_state=0)
-    # yeji_all = yeji_all[yeji_all['forecasttype'].isin(['扭亏'])]
-    yeji = yeji_all[(yeji_all['ndate'] > tran_dateformat(start_date)) & (yeji_all['ndate'] < tran_dateformat(today))]
-    yeji = yeji.drop_duplicates(subset=['instrument', 'ndate'])
+    yeji_all = yeji_all[yeji_all['forecasttype'].isin(['扭亏', '略增', '预增'])]
+    yeji = yeji_all[
+        (yeji_all['ndate'] > tran_dateformat(start_date)) & (yeji_all['ndate'] <= tran_dateformat(trade_today))]
+    yeji = forecast_filter(yeji)
+    # yeji = get_forecast_to_yeji(start_date, trade_today)
+    # yeji = yeji[yeji['forecasttype'] == '预增']
+    # yeji = yeji.drop_duplicates(subset=['instrument', 'ndate'])
 
     pred_tail = 1  # 公告发布日后pred_tail日收盘价卖出
     pred_head = 0  # 公告发布日后pred_head日开盘价买入
@@ -1004,8 +1131,9 @@ if __name__ == '__main__':
     max = 0
     max_pos = 0
     pos_rtn = pd.DataFrame(columns=['total_rtn', 'average_pos', 'max_draw_down', 'sharpe_ratio'])
-    result = pd.DataFrame(columns=['rtn', 'pure_rtn', 'zz500_rtn', 'net_rtn', 'in_date', 'out_date', 'code', 'pub_date',
-                                   'sum_pure_return', 'forecasttype', 'zfpx', 'positions'])
+    result = pd.DataFrame(
+        columns=['rtn', 'pure_rtn', 'zz500_rtn', 'net_rtn', 'in_date', 'out_date', 'code', 'pub_date',
+                 'sum_pure_return', 'forecasttype', 'zfpx', 'positions'])
     results = []
 
     for pos in range(positions, positions + 5, 5):
@@ -1015,7 +1143,10 @@ if __name__ == '__main__':
         if max < result[-1:].sum_pure_return.values[0]:
             max = result[-1:].sum_pure_return.values[0]
             max_pos = pos / 100
-        net_date_value = (result[50:].groupby('out_date').net_rtn.agg('sum') + 100) / 100
+        calulator_date = (datetime.datetime.strptime(start_date, '%Y%m%d') + datetime.timedelta(days=100)).strftime(
+            '%Y-%m-%d')
+        net_date_value = (result[result['pub_date'] > calulator_date].groupby('out_date').net_rtn.agg(
+            'sum') + 100) / 100
         """非复利"""
         net_date_value_b = net_date_value - 1
         total_net_date_value_b = net_date_value_b.cumsum() + 1
@@ -1042,26 +1173,8 @@ if __name__ == '__main__':
 
     IC_df = calc_factors(result)
     yeji_today = yeji_all[
-        (yeji_all['ndate'] > tran_dateformat(today)) & (yeji_all['ndate'] <= tran_dateformat(tomorrow))]
+        (yeji_all['ndate'] > tran_dateformat(trade_today)) & (yeji_all['ndate'] <= tran_dateformat(tomorrow))]
     optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result)
     print('明日购买股票列表为:', optimal_list)
     print('评分为：', scores_df)
-    plt.ylabel("Return")
-    plt.xlabel("Time")
-    plt.rcParams['figure.figsize'] = (15.0, 6.0)
-    plt.rcParams['savefig.dpi'] = 300  # 图片像素
-    plt.rcParams['figure.dpi'] = 300  # 分辨率
-    plt.rcParams['figure.figsize'] = (15.0, 6.0)
-    title = 'sharpe:' + str(sharpe_ratio(net_date_value - 1))
-    title = title + ' ' + 'maxdrawn:' + str(MaxDrawdown(total_net_date_value_b)) + '\n'
-    title = title + ' ' + 'selectrate:' + str(ratio)
-    title = title + ' ' + 'rtn:' + str(
-        result[-1:].sum_pure_return.values[0]) + ' compound growth rate:' + str(
-        100 * (total_net_date_value[-1] - 1)) + '%'
-    plt.title(title, fontsize=8)
-    plt.grid()
-    plt.plot(pd.DatetimeIndex(total_net_date_value.index), total_net_date_value.values)
-    result4 = read_result('./data/result1620-10-11factors.csv')
-    result4 = result4[50:]
-    compare_plt(result4, '10ratio 13factor')
-    plt.show()
+    draw_figure(net_date_value, total_net_date_value_b, result, total_net_date_value)

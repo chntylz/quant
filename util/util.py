@@ -41,10 +41,10 @@ def get_IC(factor, re_future, startdate, enddate):
 
 
 def standard(x):
-    # scaler = StandardScaler()
-    # x_std = scaler.fit_transform(x)
-    x_df = pd.DataFrame(data=x)
-    x_std = x_df.rank().to_numpy()
+    scaler = StandardScaler()
+    x_std = scaler.fit_transform(x)
+    # x_df = pd.DataFrame(data=x)
+    # x_std = x_df.rank().to_numpy()
     return x_std
 
 

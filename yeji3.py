@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tushare as ts
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import OneHotEncoder
 
+from forecast_strategy import get_calender
 from util import tunshare as tn
 from util import util
 
@@ -68,7 +70,7 @@ def trade_date_cac(base_date, days, calendar):
                 return False, None, None
             if datetime.datetime.strptime(sell_date.cal_date.values[0], '%Y%m%d') > datetime.datetime.strptime(end_date,
                                                                                                                '%Y%m%d'):
-                return False
+                return False, None, None
             if sell_date.is_open.values[0] == 1:
                 count += 1
 
@@ -76,6 +78,9 @@ def trade_date_cac(base_date, days, calendar):
     sell_date_str = datetime.datetime.strptime(sell_date.cal_date.values[0], '%Y%m%d').strftime('%Y-%m-%d').__str__()
 
     return True, buy_date_str, sell_date_str
+
+
+pca = PCA(n_components=10)
 
 
 def get_yejipredict_profit(pred_head, pred_tail, yeji, calendar):
@@ -169,7 +174,8 @@ def check_loan(ts_code):
         return True
     return False
 
-newstock  = []
+
+newstock = []
 
 
 def check_start_day(start_info):
@@ -263,6 +269,9 @@ def check_trade_period(dt, calendar):
         if not exist:
             return False, dt, start_info, end_info
         next_dt = get_dt_data(end_info.ts_code, next_date, next_date)
+        if next_dt is None:
+            raise RuntimeWarning('nex_dt is None:', end_info)
+            return False, dt, start_info, end_info
         while len(next_dt) == 0:
             # print('既无法买入后,下一日停牌')
             exist, begin, next_date = trade_date_cac(end, 1, calendar)
@@ -391,7 +400,7 @@ def get_nextday_factor(yeji_next_day, result):
     scores_df = pd.DataFrame(
         columns=scores_df_column)
     ndate_dict = {}
-    factor_weights = calc_dynamic_factor(result, IC_range=90, IC_step=10, IC_times=10)
+    factor_weights = calc_dynamic_factor(result, IC_range=90, IC_step=5, IC_times=10)
     for index, item in yeji_next_day.iterrows():
         ndate = item.ndate
         ts_code = item.instrument[0:9]
@@ -407,6 +416,7 @@ def get_nextday_factor(yeji_next_day, result):
         factors_today.loc[ts_code] = factors
 
     std_factors = get_std_factors(factors_today, result.iloc[-100:-1, :])
+    print(std_factors)
     for index, item in std_factors.iterrows():
         scores = (factor_weights * item[factors_list]).sum()
         scores_df.loc[index] = [scores, ndate_dict.get(index), item.today]
@@ -460,7 +470,7 @@ def get_optimal_list(today_buy_candidate_list, result):
     return optimal_list, factors_today
 
 
-ratio = 15
+ratio = 12
 count = 0
 
 
@@ -543,7 +553,8 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
             available, positions_df = calc_position(tran_dateformat(buy_date), tran_dateformat(end_date),
                                                     per_ts_pos, positions_df)
             continue
-
+        elif not can_sell:
+            continue
         try:
             forecasttype = \
                 yeji_range[(yeji_range['ndate'] == buy_ts_info[0]) & (
@@ -762,7 +773,10 @@ def extract_factors(ts_code, start, end, ndate):
         #                    0,
         #                    0, from_list_date.days, 0, 0]
         #     return factor_list
-        from_list_date = np.log(from_list_date.days)
+        days = from_list_date.days
+        if days < 1:
+            days = 1
+        from_list_date = np.log(days)
     except Exception as e:
         print('上市日距离计算:', e)
         from_list_date = 200
@@ -859,12 +873,13 @@ def calc_factors(result_factor, times=None, period=90, step=45):
             days=period)).strftime('%Y%m%d').__str__()
         result_temp = result_factor[
             (result_factor['out_date'] <= start_date2) & (result_factor['out_date'] > end_date2)].copy()
-        if len(result_temp) == 0:
+        if len(result_temp) < 30:
             start_date2 = end_date2
             continue
         # result_temp = get_factors(result_temp)
 
-        std_feature = util.standard(result_temp[IC_factors].to_numpy())
+        std_feature = util.standard(result_temp[IC_factors].dropna().to_numpy())
+
         for i in range(1, std_feature.shape[1]):
             columns = IC_factors
             iic = util.IC(std_feature[:, i], std_feature[:, 0])
@@ -900,11 +915,11 @@ if __name__ == '__main__':
 
     # yeji, X_test = train_test_split(yeji_all, test_size=0.01, random_state=0)
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
-    start_date = '20160101'
-    end_date = '2020903'
+    start_date = '20190617'
+    end_date = '2020824'
 
-    today = '2020902'
-    tomorrow = '20200903'
+    today = '2020823'
+    tomorrow = '2020824'
 
     # yeji_all = yeji_all[yeji_all['forecasttype'].isin(['扭亏'])]
     yeji = yeji_all[(yeji_all['ndate'] > tran_dateformat(start_date)) & (yeji_all['ndate'] < tran_dateformat(today))]
@@ -913,8 +928,8 @@ if __name__ == '__main__':
     pred_head = 0  # 公告发布日后pred_head日开盘价买入
 
     pro = tn.get_pro()
-    calender = pro.trade_cal(exchange='', start_date=start_date, end_date=end_date)
-
+    # calender = pro.trade_cal(exchange='', start_date=start_date, end_date=end_date)
+    calender = get_calender()
     dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str})
 
     positions = 80  # 单只持仓为15%
@@ -957,7 +972,8 @@ if __name__ == '__main__':
     #                                                                                       'out_date': str})
 
     IC_df = calc_factors(result)
-    yeji_today = yeji_all[yeji_all['ndate'] == tran_dateformat(tomorrow)]
+    yeji_today = yeji_all[
+        (yeji_all['ndate'] > tran_dateformat(today)) & (yeji_all['ndate'] <= tran_dateformat(tomorrow))]
     optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result)
     print('明日购买股票列表为:', optimal_list)
     print('评分为：', scores_df)
@@ -967,7 +983,7 @@ if __name__ == '__main__':
     plt.rcParams['savefig.dpi'] = 300  # 图片像素
     plt.rcParams['figure.dpi'] = 300  # 分辨率
     plt.rcParams['figure.figsize'] = (15.0, 6.0)
-    title = 'sharpe:' + str(sharpe_ratio(net_date_value - 1))
+    title = 'yeji3::sharpe:' + str(sharpe_ratio(net_date_value - 1))
     title = title + ' ' + 'maxdrawn:' + str(MaxDrawdown(total_net_date_value_b)) + '\n'
     title = title + ' ' + 'selectrate:' + str(ratio)
     title = title + ' ' + 'rtn:' + str(
@@ -976,7 +992,7 @@ if __name__ == '__main__':
     plt.title(title, fontsize=8)
     plt.grid()
     plt.plot(pd.DatetimeIndex(total_net_date_value.index), total_net_date_value.values)
-    result4 = pd.read_csv('./data/result1620-10-11factors.csv')
-    result4 = result4[50:]
-    compare_plt(result4, '10ratio 13factor')
+    # result4 = pd.read_csv('./data/result1620-10-11factors.csv')
+    # result4 = result4[50:]
+    # compare_plt(result4, '10ratio 13factor')
     plt.show()

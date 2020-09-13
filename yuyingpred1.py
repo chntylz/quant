@@ -441,7 +441,7 @@ def get_nextday_factor(yeji_next_day, result):
 
     buy_num = 1 + int(len(scores_df) / ratio)
     optimal_df = scores_df.sort_values(by=['score'], ascending=False).iloc[0:buy_num, :]
-    optimal_df = optimal_df[optimal_df.today > 0]
+    optimal_df = optimal_df[optimal_df.trade_today > 0]
     optimal_list = []
     for index, item in optimal_df.iterrows():
         optimal_list.append([item.ndate, index])
@@ -481,7 +481,7 @@ def get_optimal_list(today_buy_candidate_list, result):
 
     buy_num = 1 + int(len(scores_df) / ratio)
     optimal_df = scores_df.sort_values(by=['score'], ascending=False).iloc[0:buy_num, :]
-    optimal_df = optimal_df[optimal_df.today > 0]
+    optimal_df = optimal_df[optimal_df.trade_today > 0]
     optimal_list = []
     for index, item in optimal_df.iterrows():
         optimal_list.append([item.ndate, index])
