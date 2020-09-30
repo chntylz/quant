@@ -9,6 +9,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier
 
+import forecast_strategy
+
 
 def extract_code(code):
     if str(code).startswith('60') or str(code).startswith('000'):
@@ -86,13 +88,13 @@ def svc(x_train, x_test, y_train, y_test):
 
 
 def svr(x_train, x_test, y_train, y_test):
-    global re
-    svr = SVR(kernel='rbf', C=1.0)
+
+    svr = SVR(kernel='rbf')
     svr.fit(x_train, y_train)
     y_pred = svr.predict(x_test)
     # 计算测试集精度
     print(svr.score(x_test, y_test))
-    return re, svr
+    return svr
 
 
 def adaTrain(x_train, x_test, y_train, y_test):
@@ -144,36 +146,36 @@ def LrTrain(x_train, x_test, y_train, y_test):
 
 
 if __name__ == '__main__':
-    # result = pd.read_csv('./data/result1620-10-13factor.csv')
+    result = forecast_strategy.read_result('./data/temp/result1620-16factor.csv')
     # result = result.drop_duplicates(subset=['code', 'pub_date'])
-    # result = result.sort_values(by=['pub_date'])
-    # result.dropna(inplace=True)
+    result = result.sort_values(by=['pub_date'])
+    result.dropna(inplace=True)
     stock_info = pd.read_csv('./data/stock_basic_info.csv')
-    # y = result['pure_rtn'].astype(int)
+    y = result.loc[:,['pure_rtn']]
     # for index, item in result.iterrows():
     #     result.loc[index, 'cate'] = get_cate(item.code)
-    # x_data = result.iloc[:, 12:]
+    x_data = result.iloc[:, 13:]
     # x_data.to_csv('./data/x.csv', index=False)
     # y.to_csv('./data/y.csv', index=False)
-    x_data = pd.read_csv('./data/x.csv')
-    y = pd.read_csv('./data/y.csv')
+    # x_data = pd.read_csv('./data/x.csv')
+    # y = pd.read_csv('./data/y.csv')
     scaler = StandardScaler()
-    x_data = x_data.fillna(0)
+    # x_data = x_data.fillna(0)
 
-    x_data = PCA_factor(x_data)
+
 
     x_std = scaler.fit_transform(x_data)
 
     # x_std = x_data.to_numpy()
     tscv = TimeSeriesSplit(n_splits=5)
     y_data = y.copy()
-    y_data[y_data['pure_rtn'] > 0] = 1
-    y_data[y_data['pure_rtn'] < 0] = 0
+    # y_data[y_data['pure_rtn'] > 0] = 1
+    # y_data[y_data['pure_rtn'] < 0] = 0
     y_data = y_data['pure_rtn'].to_numpy()
 
     # y_data = scaler.fit_transform(y_data.reshape(-1, 1))
-    train_start = -1500
-    train_end = -150
+    train_start = -10000
+    train_end = -100
     test_start = -50
     test_end = -1
     result = []
@@ -186,6 +188,6 @@ if __name__ == '__main__':
     x_test = x_std[test_start:-1, :]
     y_train = y_data[train_start:train_end]
     y_test = y_data[test_start:-1]
-    re, mod = svc(x_train, x_test, y_train, y_test)
-    result.append(re)
-    print('mod：' + str(re))
+    mod = svr(x_train, x_test, y_train, y_test)
+
+

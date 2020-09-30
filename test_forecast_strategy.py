@@ -1,6 +1,7 @@
 from unittest import TestCase
 
 import forecast_strategy
+from util import tunshare as tn
 
 
 class Test(TestCase):
@@ -25,5 +26,22 @@ class Test(TestCase):
 
 class Test(TestCase):
     def test_calc_netprofit_factor(self):
-        print(forecast_strategy.calc_netprofit_factor('600696.SH','20190331',-57.1649))
+        print(forecast_strategy.calc_netprofit_factor('600696.SH', '20190331', -57.1649))
+        self.fail()
+
+
+class Test(TestCase):
+    def test_get_padding(self):
+        self.fail()
+
+
+class Test(TestCase):
+    def test_get_nextday_factor(self):
+        forecast_strategy.end_date = '20200930'
+        forecast_strategy.pro = tn.get_pro()
+        forecast_strategy.calender = forecast_strategy.get_calender('20150101')
+        forecast_strategy.yeji_all, b = forecast_strategy.create_forecast_df('20190101', '20200929', '20200930', True)
+        result = forecast_strategy.read_result('./data/temp/r11.csv')
+        yeji_today = forecast_strategy.read_yeji('./data/temp/yejitoday.csv')
+        forecast_strategy.get_nextday_factor(yeji_today, result)
         self.fail()

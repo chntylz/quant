@@ -437,8 +437,9 @@ def get_optimal_list(today_buy_candidate_list, result):
     factors_today = pd.DataFrame(columns=factors_list)
     scores_df = pd.DataFrame(
         columns=scores_df_column)
+    result_optimal = result.sort_values(by=['out_date','in_date'],ascending=False)
     """根据历史记录，动态计算因子权重,更新因子暴露值"""
-    factor_weights = calc_dynamic_factor(result)
+    factor_weights = calc_dynamic_factor(result_optimal)
     ndate_dict = {}
     if factor_weights is None:
         factor_weights = pd.Series(initial_fw)
