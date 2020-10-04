@@ -18,7 +18,6 @@ class MyStrategy(bt.Strategy):
         self.order = None
         self.buyprice = None
         self.buycomm = None
-        self.da
         # 添加移动均线指标
         self.sma = bt.indicators.MovingAverageSimple(
             self.datas[0], period=self.params.maperiod)

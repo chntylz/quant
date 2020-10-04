@@ -444,9 +444,6 @@ all_ts_codes = \
     "688579.SH,688580.SH,688586.SH,688588.SH,688589.SH,688596.SH,688598.SH,688599.SH,688600.SH,688981.SH," + \
     "000043.SZ"
 
-def get_stock_list(all_list):
-
-    return
 
 def get_forecast_data(ts_codes, report_date):
     data = c.css(ts_codes,
