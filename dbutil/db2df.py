@@ -10,11 +10,15 @@ engine = create_engine('mysql+pymysql://root:myh123@localhost:3306/quant?charset
 pro = tunshare.get_pro()
 
 
-def get_k_data(ts_code, start, end):
+def get_k_data(ts_code, start, end) -> pd.DataFrame:
     global engine
     sql = "SELECT * FROM quant.stock_daily where ts_code ='" + ts_code + "' and trade_date between '" + start + "' and '" + end + "'"
     return pd.read_sql(sql, engine)
 
+def get_k_data_period( start, end):
+    global engine
+    sql = "SELECT * FROM quant.stock_daily where trade_date between '" + start + "' and '" + end + "' order by trade_date"
+    return pd.read_sql(sql, engine)
 
 def get_basic(ts_code, start, end):
     sql = "SELECT ts_code,trade_date,close,turnover_rate_f,volume_ratio,pe_ttm,circ_mv FROM quant.stock_basic where  ts_code ='" + ts_code + "' and trade_date between '" + start + "' and '" + end + "'"

@@ -48,6 +48,14 @@ def standard(x):
     return x_std
 
 
+def fit_standard(x):
+    scaler = StandardScaler()
+    x_std = scaler.fit_transform(x)
+    # x_df = pd.DataFrame(data=x)
+    # x_std = x_df.rank().to_numpy()
+    return x_std, scaler
+
+
 def IC(x, re):
     IC = []
     if not (np.sum(np.logical_and(~np.isnan(x), ~np.isnan(re))) > 50):

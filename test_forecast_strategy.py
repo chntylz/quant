@@ -1,5 +1,6 @@
 from unittest import TestCase
 
+import BuySignalCache
 import forecast_strategy
 from util import tunshare as tn
 
@@ -44,4 +45,13 @@ class Test(TestCase):
         result = forecast_strategy.read_result('./data/temp/r11.csv')
         yeji_today = forecast_strategy.read_yeji('./data/temp/yejitoday.csv')
         forecast_strategy.get_nextday_factor(yeji_today, result)
+        self.fail()
+
+
+class TestBuySignalCache(TestCase):
+    def test_get_cache(self):
+        signal= BuySignalCache.BuySignalCache()
+        signal.load_cache('./data/buysignal.csv')
+        a = signal.get_cache('2018-05-02--2020-09-29--0')
+        signal.save_cache('./data/buysignal.csv')
         self.fail()

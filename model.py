@@ -79,7 +79,7 @@ factors_list = ['forecast', 'zfpx', 'size', 'turnover_rate5', 'turnover_rate1', 
 
 def svc(x_train, x_test, y_train, y_test):
     global re
-    svc = SVC(kernel='poly')
+    svc = SVC(kernel='rbf')
     svc.fit(x_train, y_train)
     y_pred = svc.predict(x_test)
     # 计算测试集精度
@@ -89,12 +89,12 @@ def svc(x_train, x_test, y_train, y_test):
 
 def svr(x_train, x_test, y_train, y_test):
 
-    svr = SVR(kernel='rbf')
-    svr.fit(x_train, y_train)
-    y_pred = svr.predict(x_test)
+    sr = SVR(kernel='rbf')
+    sr.fit(x_train, y_train)
+    y_pred = sr.predict(x_test)
     # 计算测试集精度
-    print(svr.score(x_test, y_test))
-    return svr
+    print(sr.score(x_test, y_test))
+    return sr, y_pred
 
 
 def adaTrain(x_train, x_test, y_train, y_test):

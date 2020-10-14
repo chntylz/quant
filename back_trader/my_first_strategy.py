@@ -14,6 +14,7 @@ class MyStrategy(bt.Strategy):
     def __init__(self):
         # 指定价格序列
         self.dataclose = self.datas[0].close
+        self.datanames = self.getdatanames()
         # 初始化交易指令、买卖价格和手续费
         self.order = None
         self.buyprice = None
@@ -41,6 +42,7 @@ class MyStrategy(bt.Strategy):
                 self.log('SELL CREATE, %.2f' % self.dataclose[0])
                 # 执行卖出
                 self.order = self.sell()
+
 
     # 交易记录日志（可省略，默认不输出结果）
     def log(self, txt, dt=None, doprint=False):
@@ -95,7 +97,7 @@ def plot_stock(code, title, start, end):
     plt.show()
 
 
-def main(code, start, end='', startcash=10000, qts=500, com=0.0016):
+def main(code, start, end='', startcash=10000, qts=1000, com=0.0016):
     # 创建主控制器
     cerebro = bt.Cerebro()
     # 导入策略参数寻优
@@ -120,4 +122,4 @@ def main(code, start, end='', startcash=10000, qts=500, com=0.0016):
 
 
 if __name__ == '__main__':
-    main('sh', '2010-01-01', '', 1000000, 100)
+    main('300208', '2019-08-01', '', 1000000, 100)
