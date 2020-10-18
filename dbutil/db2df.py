@@ -51,6 +51,8 @@ def get_suspend_df(ts_code, trade_date):
         '-', '', 3) + "' and suspend_type = 'S'"
     return pd.read_sql(sql, engine)
 
+def init_tl_forecast(data):
+    df_current.to_sql(name='tl_forecast', con=engine, if_exists='append', index=False)
 
 def update_suspend_d(from_date=None, end_date=None):
     from_date_S = from_date
@@ -141,6 +143,14 @@ def get_choice_forecast_to_yeji(from_date, end_date):
     sql = "select * from quant.choice_forecast where (PROFITNOTICEDATE between '" + from_date + "' and '" + end_date + "') and PROFITNOTICESTYLE in ('略增','预增','扭亏') order by PROFITNOTICEDATE"
     yj_data = pd.read_sql(sql, engine)
     yj_data = choice_forecast_2yeji(yj_data)
+    yj_data['intime'] = 2
+    return yj_data
+
+def get_choice_forecast_to_yeji_all(from_date, end_date):
+    sql = "select * from quant.choice_forecast where (PROFITNOTICEDATE between '" + from_date + "' and '" + end_date + "')  order by PROFITNOTICEDATE"
+    yj_data = pd.read_sql(sql, engine)
+    yj_data = choice_forecast_2yeji(yj_data)
+    yj_data['intime'] = 2
     return yj_data
 
 def get_forecast_all(from_date, end_date):
@@ -178,7 +188,6 @@ def yeji_forecast_db2df(yj_data):
     yj_data = yj_data[order]
     return yj_data
 
-
 def choice_forecast_2yeji(choice_data):
     data = choice_data.rename(
         columns={'REPORT_DATE': 'date', 'CODES': 'instrument', 'PROFITNOTICEDATE': 'ndate', 'PROFITNOTICESTYLE': 'forecasttype',
@@ -205,7 +214,19 @@ def choice_forecast_2yeji(choice_data):
     data['date'] = data['date'].apply(function)
     data['ndate'] = data['ndate'].apply(function)
     data = data[order]
+    data['s_type'] = data['date'].apply(lambda x: get_choice_stype(x))
     return data
+
+def get_choice_stype(x: str):
+    if x.endswith('-03-31'):
+        return 1
+    elif x.endswith('-06-30'):
+        return 2
+    elif x.endswith('-09-30'):
+        return 4
+    elif x.endswith('-12-31'):
+        return 5
+
 
 def check_forecast():
     sql = 'SELECT * FROM quant.stock_forecast order by ann_date desc limit 1'

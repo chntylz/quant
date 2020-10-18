@@ -1,16 +1,20 @@
 import datetime
 import logging
+import multiprocessing
 import os
 from random import *
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import stats
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.svm import SVR
 
+import model
 from BuySignalCache import BuySignalCache
-from dbutil import db2df
+from dbutil import db2df, tl_data_utl
 from dbutil.db2df import get_k_data, get_suspend_df, get_basic
 from util import tunshare as tn
 from util import util
@@ -482,10 +486,31 @@ def get_padding(result_optimal, length_padding):
 
 
 def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date):
+    IC_factors = ['pure_rtn']
+    IC_factors.extend(factors_list)
     factors_today = pd.DataFrame(columns=factors_list)
     result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    result_test = result_optimal[-10:-1]
+    result_train = result_optimal[:-10]
     ndate_dict = {}
-    std_features, scalers = get_his_factor(result,range_ic,step,times)
+    std_features, scalers = get_his_factor(result_train, range_ic, step,
+                                           times)  # 第一列为pure_rtn:Y，只有目前距离起始日>range+step*time个自然日，才会返回非None的标准化特征和特征变换器
+    svr_models = []
+    weights = []
+    if std_features is not None:
+        for i in range(len(std_features)):
+            sr = SVR(kernel='rbf')
+            std_feature = std_features[i]
+            scaler = scalers[i]
+            sr.fit(std_feature[:, 1:], std_feature[:, 0])
+            svr_models.append(sr)
+            std_feature_test = scaler.transform(result_test[IC_factors])
+            y_test = std_feature_test[:, 0]
+            y_test_predict = sr.predict(std_feature_test[:, 1:])
+            weight = stats.spearmanr(y_test, y_test_predict, nan_policy='omit')[0]
+            weights.append(weight)
+
+    # 包括第一列为标准化的pure_rtn
     for buy_ts_info in today_buy_candidate_list:
         ndate = buy_ts_info[0]
         ts_code = buy_ts_info[1]
@@ -495,7 +520,6 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date):
         if len(factor_cache) > 0:
             factors_today.loc[ts_code] = factor_cache.iloc[0]
         else:
-
             base_date = trade_date_cac(ndate, pred_head - 1, calender, -1)
             start_date1 = trade_date_cac(ndate, pred_head - 5, calender, -1)
             if start_date1[2] is None or base_date[2] is None:
@@ -505,14 +529,28 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date):
             if factors is None:
                 continue
             factors_today.loc[ts_code] = factors
+    optimal_list = []
+    if std_features is not None:
+        if len(factors_today) < ratio:
+            pointer = len(factors_today) - ratio
+            result_padding = get_padding(result_optimal, pointer * -1)
+            std_factors = get_std_factors(factors_today, result_padding)
+        else:
+            empty_result = pd.DataFrame()
+            std_factors = get_std_factors(factors_today, empty_result)
+        buy_num = int(residual + (len(scores_df) / ratio))
 
-    if len(factors_today) < ratio:
-        pointer = len(factors_today) - ratio
-        result_padding = get_padding(result_optimal, pointer * -1)
-        std_factors = get_std_factors(factors_today, result_padding)
-    else:
-        empty_result = pd.DataFrame()
-        std_factors = get_std_factors(factors_today, empty_result)
+        scores_df.index = std_factors.index  # 构造score的两列（结合标准化的当日factor）
+        scores_df['today'] = std_factors['today']
+        for index, svr in enumerate(svr_models):  # 构造当日的score
+            today_y = svr.predict(std_factors[:, :-1])
+            scores_df['score'] = scores_df['score'] + today_y * weights[index]
+
+        optimal_df = scores_df.sort_values(by=['score'], ascending=False).iloc[0:buy_num, :]
+        optimal_df = optimal_df[optimal_df.today > 0]
+        for index, item in optimal_df.iterrows():
+            optimal_list.append([item.ndate, index])
+    return optimal_list, factors_today
 
 
 def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
@@ -532,8 +570,10 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
         ndate = buy_ts_info[0]
         ts_code = buy_ts_info[1]
         ndate_dict[ts_code] = ndate
+        # TODO:: 修改 result_cache
         factor_cache = result_store[(result_store.in_date == buy_date) & (result_store.code == ts_code) &
-                                    (result_store.pub_date == ndate)].loc[:, factors_list]
+                                    (result_store.pub_date == ndate)][factors_list]
+        # factor_cache = pd.DataFrame()
         if len(factor_cache) > 0:
             factors_today.loc[ts_code] = factor_cache.iloc[0]
         else:
@@ -615,7 +655,7 @@ def back_trade(buy_signal_dict, dp_all_range, positions, positions_df, head, tai
         available_pos = positions - (
                 1 - positions_df[positions_df.cal_date == buy_date.replace('-', '', 3)]['pos'].values[0])
         if available_pos <= 0 or today_buy_list is None or len(today_buy_list) == 0:
-            if available_pos <= 0  and len(today_buy_list)>0:
+            if available_pos <= 0 and len(today_buy_list) > 0:
                 print(f'本日没有可用仓位，{today_buy_list}')
             result_today = calc_one_day_returns(0, 0, today_buy_candidate_list, buy_date, head, tail,
                                                 result_today, dp_all_range, yeji_range, positions_df)
@@ -673,13 +713,13 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
             continue
         elif not can_sell:
             continue
-        # if is_real == 1:
-        # TODO:: 取消注释
-        # available, positions_df = calc_position(tran_dateformat(buy_date),
-        #                                         tran_dateformat(sell_date), per_ts_pos,
-        #                                         positions_df)
-        # if not available:
-        #     continue
+        if is_real == 1:
+            # TODO:: 取消注释
+            available, positions_df = calc_position(tran_dateformat(buy_date),
+                                                    tran_dateformat(sell_date), per_ts_pos,
+                                                    positions_df)
+            if not available:
+                continue
         result_cache = result_store[(result_store.pub_date == buy_ts_info[0]) & (result_store.code == buy_ts_info[1])]
 
         if len(result_cache) > 0:
@@ -710,8 +750,7 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
 
         # result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
         #                            buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-        #                            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        #                            np.nan, np.nan]
+        #                            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,np.nan,np.nan,np.nan]
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
                                    np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
@@ -886,10 +925,10 @@ def save_datas():
     suspend.to_csv('./data/suspend.csv', index=False)
 
 
-# factors_list = ['forecast', 'zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
+# factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
 #                 'pe_ttm',
-#                 'volume_ratio', 'industry', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-#                 'profit_score', 'related_socre']
+#                 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
+#                 'profit_score', 'related_socre', 's_type','intime','origin']
 factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm',
                 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
@@ -960,6 +999,18 @@ def extract_factors(ts_code, start, end, ndate):
             yeji_all[(yeji_all['ndate'] == ndate) & (
                     yeji_all['instrument'] == ts_code + 'A')].iloc[
                 0, 8]
+        s_type = \
+            yeji_all[(yeji_all['ndate'] == ndate) & (
+                    yeji_all['instrument'] == ts_code + 'A')].iloc[
+                0, 9]
+        intime = \
+            yeji_all[(yeji_all['ndate'] == ndate) & (
+                    yeji_all['instrument'] == ts_code + 'A')].iloc[
+                0, 10]
+        origin = \
+            yeji_all[(yeji_all['ndate'] == ndate) & (
+                    yeji_all['instrument'] == ts_code + 'A')].iloc[
+                0, 11]
 
     except IndexError as ie:
         print('获取forecast和zfpx: ', ie, ndate, ts_code)
@@ -1054,9 +1105,9 @@ def extract_factors(ts_code, start, end, ndate):
         industry = 1000
         pass
 
-    # factor_list = [forecast, zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
-    #                volume_ratio,
-    #                industry, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score, related_score]
+    # factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
+    #                volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
+    #                related_score, s_type, intime, origin]
     factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
                    volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
                    related_score]
@@ -1087,7 +1138,7 @@ def change_forecast(str):
 def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10):
     length_data = len(history_data)
     if length_data < 22:
-        return None
+        return None, None
     sort_data = history_data.sort_values(by='pub_date')
     start_ndate = sort_data.iloc[0, :].pub_date
     end_ndate = sort_data.iloc[-1, :].pub_date
@@ -1120,7 +1171,8 @@ def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10):
                 days=step)).strftime('%Y%m%d').__str__()
             if times is not None:
                 times -= 1
-    return std_features, scalers
+        return std_features, scalers
+    return None, None
 
 
 def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
@@ -1370,7 +1422,8 @@ def init_param():
 
 def save_param(result_local):
     buy_signal_cache.save_cache('./data/buysignal.csv')
-    result_save = result_local.append(result_store)
+
+    result_save = result_local.drop(columns=['optimal']).append(result_store)
     result_save = result_save.append(result_store)
     result_save.drop_duplicates(subset=['code', 'pub_date', 'in_date'], keep=False, inplace=True)
     result_save.to_csv('./data/result_store.csv', index=False, header=0, mode='a')
@@ -1395,7 +1448,7 @@ def trade_test(yeji_l, positions, ratio_i1, range_j1, residual_k1, *args, **kwar
             for j, d in enumerate(item[1]):
                 rtn_row = \
                     result_local[(result_local.in_date == item[0]) & (result_local.pub_date == d[0]) & (
-                                result_local.code == d[1])].pure_rtn
+                            result_local.code == d[1])].pure_rtn
                 result_local.loc[
                     (result_local.in_date == item[0]) & (result_local.pub_date == d[0]) & (result_local.code == d[1]),
                     'optimal'] = 1
@@ -1445,7 +1498,7 @@ def describe_result(result_l, positions_dataframe_l, ratio_local, range_local, r
     print('最大回撤:', max_draw_down)
     print('Sharpe率:', sharpe_ratio(net_date_value - 1))
     print(f'SQN Score:{sqn_score}')
-    # draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
+    draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
 
     return net_date_value, total_net_date_value_b, total_net_date_value, total_rtn, average_positions, max_draw_down, \
            sharp, ratio_local, range_local, residual_local
@@ -1462,6 +1515,27 @@ def generate_start_date_list(begin_date, stop_date, num):
     return result_list
 
 
+def get_intime(row):
+    instrument = row.code + 'A'
+    ndate = row.pub_date
+    intime = yeji[(yeji.ndate == ndate) & (yeji.instrument == instrument)].intime.values[0]
+    return intime
+
+
+def get_origin(row):
+    instrument = row.code + 'A'
+    ndate = row.pub_date
+    origin = yeji[(yeji.ndate == ndate) & (yeji.instrument == instrument)].origin.values[0]
+    return origin
+
+
+def get_update_num(row):
+    instrument = row.code + 'A'
+    ndate = row.pub_date
+    num = yeji[(yeji.ndate == ndate) & (yeji.instrument == instrument)].update_num.values[0]
+    return num
+
+
 if __name__ == '__main__':
     ratio = 5
     count = 0
@@ -1476,12 +1550,17 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201014'  ## 计算截止日
-    start_date_list = generate_start_date_list('20190907', '20190908', 100)
+    end_date = '20201019'  ## 计算截止日
+    start_date_list = generate_start_date_list('20190907', '20190908', 10)
     print(str(start_date_list))
-    trade_today = '20201013'  ## 当日
-    tomorrow = '20201014'
-    yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
+    trade_today = '20201018'  ## 当日
+    tomorrow = '20201019'
+
+    # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
+
+    yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
+    # yeji = yeji.drop(columns=['intime'])
 
     pred_tail = 1  # 公告发布日后pred_tail日收盘价卖出
     pred_head = 0  # 公告发布日后pred_head日开盘价买入
@@ -1502,9 +1581,10 @@ if __name__ == '__main__':
     # with multiprocessing.Pool(processes=8) as pool:
     #     for li, date in enumerate(start_date_list):
     #         yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
-    #         for i in range(0, 1, 1):  # ratio
-    #             for j in range(0, 10, 10):  # range
-    #                 for k in range(0, 10, 10):  # residual*10
+    #         # yeji_array.append([yeji_all, yeji])
+    #         for i in range(0, 20, 1):  # ratio
+    #             for j in range(0, 20, 10):  # range
+    #                 for k in range(0, 20, 10):  # residual*10
     #                     ratio_i = i
     #                     range_j = j
     #                     residual_k = k * 0.1
@@ -1546,14 +1626,17 @@ if __name__ == '__main__':
     # logging.warning(msg=f'平均sharp:{np.mean(sharp_array)}, 最大值:{np.max(sharp_array)}, 最小值{np.min(sharp_array)}')
     # logging.warning(msg=f'sharp标准差:{np.std(sharp_array)}')
 
-    yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
+    # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     yeji_today = yeji_all[
         (yeji_all['ndate'] > tran_dateformat(trade_today)) & (yeji_all['ndate'] <= tran_dateformat(tomorrow))]
-    yeji_today = yeji_today[yeji_today['forecasttype'].isin(['预增'])]
+    yeji_today = yeji_today[yeji_today['forecasttype'].isin(['预增', 22])]
 
     if len(yeji_today):
         optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, 5, 22, 0)
         print('明日购买股票列表为:', optimal_list)
         print('评分为：', scores_df.sort_values('score'))
 
+    result['intime'] = result.apply(lambda row: get_intime(row), axis=1)
+    result['update_num'] = result.apply(lambda row: get_update_num(row), axis=1)
+    result['origin'] = result.apply(lambda row: get_origin(row), axis=1)
     # draw_figure(net_date_value, total_net_date_value_b, result, total_net_date_value)
