@@ -162,7 +162,8 @@ def get_yeji_data(pd_data, path='../data/tl_yeji.csv'):
 def mix_choice(yeji_tl):
     yeji_tl['origin'] = 1
     yeji_choice = db2df.get_choice_forecast_to_yeji_all('2019-09-08',
-                                                        datetime.datetime.now().date().strftime('%Y-%m-%d'))
+                                                        (datetime.datetime.now().date() + datetime.timedelta(
+                                                            days=1)).strftime('%Y-%m-%d'))
     yeji_choice['origin'] = 2
     for index, item in yeji_tl.iterrows():
         if len(yeji_choice[
@@ -171,7 +172,6 @@ def mix_choice(yeji_tl):
             yeji_tl.loc[index, 'origin'] = 0
     yeji = yeji_tl.append(yeji_choice)
     yeji = yeji[(yeji.s_type != 3)]
-
     yeji = yeji.sort_values(by=['origin'])
     yeji = yeji.drop_duplicates(subset=['date', 'ndate', 'instrument'], keep='first', ignore_index=True)
     # TODO:: 对于Q3的类别如何处理，目前先简单的处理为去除Q3类别
@@ -203,6 +203,9 @@ def get_all_tl_yeji_data(path, init):
         yeji_tl = get_yeji_data(data, path)
         yeji_all = mix_choice(yeji_tl)
         yeji_all = yeji_all[yeji_all.forecasttype.isin([22, '预增'])]
+        """过滤掉未曾在东方财富公布过的消息"""
+        # TODO:: 过滤东方财富没有发布的消息
+        yeji_all = yeji_all[yeji_all.origin != 1]
         yeji_all.to_csv(path, index=False)
     else:
         yeji_all = pd.read_csv(path, converters={'date': str, 'ndate': str})
@@ -214,4 +217,7 @@ if __name__ == '__main__':
     # all_data = init_data_store()
     # yeji_tonglian = get_yeji_data(all_data)
     # yeji_final = mix_choice(yeji_tonglian)
-    yeji_all = get_all_tl_yeji_data('../data/tl_yeji.csv', True)
+    yeji_array = []
+    for i in range(1):
+        yeji_all = get_all_tl_yeji_data('../data/tl_yeji.csv', True)
+        yeji_array.append(yeji_all)
