@@ -40,12 +40,22 @@ def get_IC(factor, re_future, startdate, enddate):
     return IC_pd
 
 
-def standard(x):
-    scaler = StandardScaler()
-    x_std = scaler.fit_transform(x)
+def standard(x, scaler=None, y=None):
+    if scaler is None:
+        scaler1 = StandardScaler()
+        if y is None:
+            x_std = scaler1.fit_transform(x)
+        else:
+            x_std = scaler1.fit_transform(x, y)
+        return x_std, scaler1
+    else:
+        if y is None:
+            x_std = scaler.fit_transform(x)
+        else:
+            x_std = scaler.fit_transform(x, y)
     # x_df = pd.DataFrame(data=x)
     # x_std = x_df.rank().to_numpy()
-    return x_std
+        return x_std, scaler
 
 
 def fit_standard(x):

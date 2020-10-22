@@ -39,11 +39,15 @@ class BuySignalCache:
             self.__cache__[index] = item.values[0]
         self.signal_cache = self.__cache__
         if os.path.exists('./data/buy_day_cache.csv'):
-            self.buy_day_cache = pd.read_csv('./data/buy_day_cache.csv', index_col=0)
+            try:
+                self.buy_day_cache = pd.read_csv('./data/buy_day_cache.csv', index_col=0)
+            except:
+                self.buy_day_cache = pd.read_csv('./data/buy_day_cache.csv', index_col=0)
+
 
     def get_buy_day(self, key):
         buy_dates = self.buy_day_cache[self.buy_day_cache.index == key]
-        if len(buy_dates)>0:
+        if len(buy_dates) >0:
             return buy_dates.buy_date.values[0]
         return None
 
