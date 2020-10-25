@@ -496,6 +496,7 @@ class c:
         cls.__InitSucceed = True
         cls.__apiDllPath = UtilAccess.GetLibraryPath()
         cls.__quantLib = CDLL(cls.__apiDllPath)
+        # cls.__quantLib = CDLL('/Users/apple/PycharmProjects/QuantD1/choice/libs/mac/libEMQuantAPIx64.dylib')
         cls.__AsynDataFunc = cls.Type_AsynDataFunc(cls.__HandleAsynData)
 
         quantLib = cls.__quantLib

@@ -201,7 +201,7 @@ def get_all_tl_yeji_data(path, init):
     if init:
         data = init_data_store()
         yeji_tl = get_yeji_data(data, path)
-        print(yeji_tl[(yeji_tl.ndate>=datetime.datetime.now().date().strftime("%Y-%m-%d"))&(yeji_tl.forecasttype==22)])
+        print(yeji_tl[(yeji_tl.ndate >= datetime.datetime.now().date().strftime("%Y-%m-%d")) & (yeji_tl.forecasttype == 22)])
         yeji_all = mix_choice(yeji_tl)
         yeji_all = yeji_all[yeji_all.forecasttype.isin([22, '预增'])]
         """过滤掉未曾在东方财富公布过的消息"""
