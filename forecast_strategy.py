@@ -4,6 +4,7 @@ import multiprocessing
 import os
 from random import *
 
+from sklearn.ensemble import RandomForestRegressor
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from dbutil import db2df, tl_data_utl
 from dbutil.db2df import get_k_data, get_suspend_df, get_basic
 from util import tunshare as tn
 from util import util
+
+logging.getLogger().setLevel(logging.INFO)
 
 
 def trade_date_cac(base_date, days, calendar, *args):
@@ -405,7 +408,7 @@ initial_fw = {'turnover_raten': 0, 'turnover_rate1': 0, 'pct_changen': 0, 'pct_c
               'turnover_raten_std': 0}
 
 
-def get_std_factors(factors, result_loc, pca, scaler):
+def get_std_factors(factors, result_loc, pca, scaler,need_std=True):
     IC_factors = factors_list
     if factors is None or len(factors) == 0:
         return factors
@@ -415,10 +418,16 @@ def get_std_factors(factors, result_loc, pca, scaler):
         new_index = result_loc['code'].to_list()
         new_index.extend(factors.index.to_list())
         history_factors = np.append(history_factors, factors.to_numpy(), axis=0)
-        std_factors, scaler = util.standard(history_factors, scaler)
+        if need_std:
+            std_factors, scaler = util.standard(history_factors, scaler)
+        else:
+            std_factors = history_factors
     else:
         new_index = factors.index.to_list()
-        std_factors, scaler = util.standard(factors.to_numpy(), scaler)
+        if need_std:
+            std_factors, scaler = util.standard(factors.to_numpy(), scaler)
+        else:
+            std_factors = factors.to_numpy()
 
     if std_factors.shape[1] != len(factors_list):
         return factors
@@ -429,7 +438,7 @@ def get_std_factors(factors, result_loc, pca, scaler):
     return std_factors
 
 
-def get_nextday_factor_svm(yeji_next_day, result, *args):
+def get_nextday_factor_ml(yeji_next_day, result, *args):
     global end_date, ratio, range_ic, residual
     ratio = args[0]
     range_ic = args[1]
@@ -437,7 +446,7 @@ def get_nextday_factor_svm(yeji_next_day, result, *args):
     buy_list = []
     for index, item in yeji_next_day.iterrows():
         buy_list.append([item.ndate, item.instrument[:9]])
-    optimal_list1, factor_tomorrow = get_optimal_list_svr(buy_list, result, tomorrow)
+    optimal_list1, factor_tomorrow = get_optimal_list_ml(buy_list, result, tomorrow)
     return optimal_list1
 
 
@@ -507,7 +516,9 @@ def get_padding(result_optimal, length_padding):
     return result_optimal
 
 
-def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date, *args):
+def get_optimal_list_ml(today_buy_candidate_list, result_l, buy_date, *args):
+    mlr = RandomForestRegressor(n_estimators=1000)
+    need_std = False
     IC_factors = ['pure_rtn']
     IC_factors.extend(factors_list)
     scores_df_column = ['score', 'ndate', 'today']
@@ -527,19 +538,24 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date, *args):
     ndate_dict = {}
 
     """从前期的result_train抽取出buydate当天计算的模型的标注化的特征组以及标准化所需的scaler"""
-    std_features, scaler, pca = get_his_factor(result_train, range_ic, step, times)
-    svr_models = []
+
+    std_features, scaler, pca = get_his_factor(result_train, range_ic, step, times, need_std)
+
+    mlr_models = []
     weights = []
     if std_features is not None:
         for i in range(len(std_features)):
-            sr = SVR(kernel='rbf')
+            # sr = SVR(kernel='rbf')
+
             std_feature = std_features[i]
 
-            sr.fit(std_feature[:, 1:], std_feature[:, 0])
-
-            std_feature_test = scaler.transform(result_test.iloc[:, 1:].to_numpy())
+            mlr.fit(std_feature[:, 1:], std_feature[:, 0])
+            if need_std:
+                std_feature_test, scaler = util.standard(result_test.iloc[:, 1:].to_numpy(), scaler)
+            else:
+                std_feature_test = result_test.iloc[:, 1:].to_numpy()
             y_test = result_test.iloc[:, 0:1].to_numpy()
-            y_test_predict = sr.predict(std_feature_test)
+            y_test_predict = mlr.predict(std_feature_test)
             weight = stats.spearmanr(y_test, y_test_predict, nan_policy='omit')[0]
 
             # std_feature_test1 = scaler.transform(result_test1.iloc[:, 1:].to_numpy())
@@ -548,7 +564,7 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date, *args):
             # weight1 = stats.spearmanr(y_test1, y_test_predict1, nan_policy='omit')[0]
             if abs(weight) >= 0.08:
                 weights.append(weight)
-                svr_models.append(sr)
+                mlr_models.append(mlr)
 
     # 包括第一列为标准化的pure_rtn
     for buy_ts_info in today_buy_candidate_list:
@@ -575,10 +591,10 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date, *args):
         if len(factors_today) < ratio:
             pointer = len(factors_today) - ratio
             result_padding = get_padding(result_optimal, pointer * -1)
-            std_factors = get_std_factors(factors_today, result_padding, pca, scaler)
+            std_factors = get_std_factors(factors_today, result_padding, pca, scaler,need_std)
         else:
             empty_result = pd.DataFrame()
-            std_factors = get_std_factors(factors_today, empty_result, pca, scaler)
+            std_factors = get_std_factors(factors_today, empty_result, pca, scaler, need_std)
 
         # scores_df['today'] = std_factors['today']
         # scores_df.set_index(std_factors.index)  # 构造score的两列（结合标准化的当日factor）
@@ -586,9 +602,9 @@ def get_optimal_list_svr(today_buy_candidate_list, result_l, buy_date, *args):
         for index, item in std_factors.dropna().iterrows():
             scores_df.loc[index] = [0, ndate_dict.get(index), item.today]
 
-        for index, svr in enumerate(svr_models):  # 构造当日的score
+        for index, mlr in enumerate(mlr_models):  # 构造当日的score
             try:
-                today_y = svr.predict(std_factors.iloc[:, :-1].dropna())
+                today_y = mlr.predict(std_factors.iloc[:, :-1].dropna())
                 today_y = pd.DataFrame(today_y).rank()
                 if weights[index] < 0:
                     today_y = len(today_y) - today_y + 1
@@ -616,6 +632,7 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
     result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
     """根据历史记录，动态计算因子权重,更新因子暴露值"""
     factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_ic, IC_step=step, IC_times=times)
+
     ndate_dict = {}
     # if factor_weights is None:
     #     factor_weights = pd.Series(initial_fw)
@@ -644,8 +661,12 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
             if factors is None:
                 continue
             factors_today.loc[ts_code] = factors
+
+    factors_today = factors_today.dropna()
     if factor_weights is None:
         return [], factors_today
+    logging.info(f'选出的权重为:{factor_weights.to_string()}')
+
     if len(factors_today) < ratio:
         pointer = len(factors_today) - ratio
 
@@ -713,7 +734,7 @@ def back_trade(buy_signal_dict, dp_all_range, positions, positions_df, head, tai
 
         """根据因子优选当日购入的portfolio list，并返回当日潜在购买list对应的factors dataframe"""
         today_buy_list, factors_today_bt = get_optimal_list(today_buy_candidate_list, result_trade, buy_date)
-        # today_buy_list, factors_today_bt = get_optimal_list_svr(today_buy_candidate_list, result_trade, buy_date)
+        # today_buy_list, factors_today_bt = get_optimal_list_ml(today_buy_candidate_list, result_trade, buy_date)
         select_list.append((buy_date, today_buy_list))
         result_today = pd.DataFrame(
             columns=result_columns)
@@ -814,7 +835,7 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
             """扣除仓位per_ts_pos"""
 
             try:
-                net_rtn, pure_rtn, rtn, zz500_rtn = calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos,
+                net_rtn, pure_rtn, rtn, zz500_rtn =  calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos,
                                                                 sell_date)
             except AttributeError as e:
                 print(e)
@@ -831,12 +852,16 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         #                            np.nan, np.nan]
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,np.nan
-                                   ]
+                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+                                   , np.nan]
     return result_trade
 
 
+rtn_info_df = pd.DataFrame(columns=['code', 'fistday_rtn', 'total_rtn'],)
+
+
 def calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos, sell_date):
+    global rtn_info_df
     """根据最新的end 日期 更新对冲指数数组"""
     dp = dp_all_range[(dp_all_range.trade_date >= buy_date.replace('-', '', 3)) & (
             dp_all_range.trade_date <= sell_date)]
@@ -870,6 +895,8 @@ def calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos, sell_date
         last_day_return = (dtfm.iloc[-1].open - dtfm.iloc[-1].pre_close) * 100 / dtfm.iloc[-1].pre_close
         """综合收益（做多）"""
         rtn = (first_day_return + dtfm.iloc[1:-1]['pct_chg'].sum() + last_day_return)
+    if first_day_return < -1:
+        rtn_info_df.loc[buy_date] = [buyday_info.ts_code, first_day_return, rtn]
 
     if get_trade_strategy().longshort == 'long':
         """做多资产，做空指数对冲beta后纯收益"""
@@ -1014,7 +1041,7 @@ def save_datas():
 #                 'profit_score', 'related_socre', 'turnover_rate22', 'pct_change22']
 factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm', 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-                'profit_score', 'related_socre','num_forecast']
+                'profit_score', 'related_socre','num_forecast','beta0']
 
 
 def get_factors(result_in):
@@ -1195,7 +1222,12 @@ def extract_factors(ts_code, start, end, ndate):
             dp_all.trade_date <= end.replace('-','',2))]
     beta0 = (beta_df.iloc[0].close - beta_df.iloc[1].close) / beta_df.iloc[1].close
     beta5 = (beta_df.iloc[0].close - beta_df.iloc[-1].close) / (beta_df.iloc[1].close*len(beta_df))
-    beta5std = beta_df.close.diff(-1).std()
+    beta5std = beta_df.close.diff(-1).std()/beta_df.close.diff(-1).mean()
+    ddx_df = db2df.get_money_flow(ts_code, end)
+    if len(ddx_df) > 0:
+        ddx = ddx_df.ddx.values[0]
+    else:
+        ddx = 0
     date_list, key = get_buy_signal_cache_key(pred_head, yeji)
     signal_cache = buy_signal_cache.get_cache(key)
     if ndate.replace('-','',2) <= trade_today:
@@ -1209,7 +1241,7 @@ def extract_factors(ts_code, start, end, ndate):
     #                related_score, s_type, intime, origin]
     factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
                    volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
-                   related_score,num_forecast]
+                   related_score, num_forecast, beta0]
 
     return factor_list
 
@@ -1384,7 +1416,7 @@ def change_forecast(str):
         return 2
 
 
-def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10):
+def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=True):
     """输入：历史result数据，range，step，times"""
     """输出：A.三 None：交易数据不足50条|B. std_features数组（按range，step，times）来划分"""
     length_data = len(history_data)
@@ -1432,15 +1464,19 @@ def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10):
         result_temp = history_data[
             (history_data['pub_date'] <= tran_dateformat(start_date2)) & (
                     history_data['pub_date'] > tran_dateformat(end_date2))].copy()
-        if len(result_temp) < 30:
+        if len(result_temp) < 28:
             start_date2 = end_date2
             continue
-        result_temp_nona = result_temp.dropna()
-        std_feature1, scaler_curr = util.standard(result_temp_nona[IC_factors[1:-1]].to_numpy(), scaler)
+        result_temp_nona = result_temp[IC_factors[:-1]].dropna()
 
-        # std_feature1 = pca.transform(std_feature1)
-        std_feature = np.hstack((result_temp_nona.iloc[:, 0].to_numpy().reshape(len(result_temp_nona), 1),
-                                 std_feature1))
+        if need_std:
+            std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
+
+            # std_feature = pca.transform(std_feature1)
+            std_feature = np.hstack(
+                (result_temp_nona.iloc[:, 0].to_numpy().reshape(len(result_temp_nona), 1), std_feature))
+        else:
+            std_feature = result_temp_nona.to_numpy()
         std_features.append(std_feature)
         # scalers.append(scaler)
         start_date2 = (datetime.datetime.strptime(start_date2, '%Y%m%d') - datetime.timedelta(
@@ -1496,23 +1532,23 @@ def calc_factors(result_factor, times=None, period=40, step=5):
     #     print(e)
 
     """从最大日期倒退计算Factors IC"""
+
     while start_date2 > result_factor.iloc[0, 5] and ((times is None) or (times > 0)):
         """end_date = 后推90日"""
         end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 3), '%Y%m%d') - datetime.timedelta(
             days=period)).strftime('%Y%m%d').__str__()
+
         result_temp = result_factor[
             (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
                     result_factor['pub_date'] > tran_dateformat(end_date2))].copy()
 
         if len(result_temp) < 28:
-            # result_padding = get_padding(result_factor[result_factor['pub_date'] <= tran_dateformat(end_date2)],
-            #                              20-len(result_temp))
-            # result_temp = result_padding.append(result_temp)
-            # if len(result_temp) < 20:
-                start_date2 = end_date2
-                continue
+            start_date2 = end_date2
+            # start_date2 = (datetime.datetime.strptime(start_date2, '%Y%m%d') - datetime.timedelta(
+            #     days=step)).strftime('%Y%m%d').__str__()
+            continue
 
-        print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
+        # print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
         # result_temp = get_factors(result_temp)
         result_temp_nona = result_temp[IC_factors[:-1]].dropna()
         std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
@@ -1712,7 +1748,7 @@ def init_param():
     step = 5
     times = 10
     seed = np.random.seed()
-    buy_signal_cache.load_cache('./data/buysignal.csv')
+    # buy_signal_cache.load_cache('./data/buysignal.csv')
     result_store = read_result('./data/result_store1.csv')
 
 
@@ -1799,7 +1835,7 @@ def describe_result(result_l, positions_dataframe_l, ratio_local, range_local, r
     print('最大回撤:', max_draw_down)
     print('Sharpe率:', sharpe_ratio(net_date_value - 1))
     print(f'SQN Score:{sqn_score}')
-    draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
+    # draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
 
     return net_date_value, total_net_date_value_b, total_net_date_value, total_rtn, average_positions, max_draw_down, \
            sharp, ratio_local, range_local, residual_local
@@ -1859,14 +1895,14 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201026'  ## 计算截止日
-    start_date_list = generate_start_date_list('20190907', '20190908', 25)
+    end_date = '20201028'  ## 计算截止日
+    start_date_list = generate_start_date_list('20190901', '20190918', 40)
     print(str(start_date_list))
-    trade_today = '20201023'  ## 当日
-    tomorrow = '20201026'
+    trade_today = '20201027'  ## 当日
+    tomorrow = '20201028'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
@@ -1892,8 +1928,8 @@ if __name__ == '__main__':
     #         # yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
     #         yeji_array.append([yeji_all, yeji_all[
     #             (yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]])
-    #         for i in range(0, 5, 1):  # ratio
-    #             for j in range(0, 20, 2):  # range
+    #         for i in range(0, 1, 1):  # ratio
+    #             for j in range(0, 2, 2):  # range
     #                 for k in range(0, 10, 10):  # residual*10
     #                     for l in range(0, 1, 1):  # step
     #                         ratio_i = i
@@ -1946,7 +1982,7 @@ if __name__ == '__main__':
 
     if len(yeji_today):
         optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, 5, 12, 0)
-        optimal_list1 = get_nextday_factor_svm(yeji_today, result, 5, 22, 0)
+        optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
         print('明日购买股票列表为:', optimal_list)
         print('评分为：', scores_df.sort_values('score'))
     for index, row in result.iterrows():
