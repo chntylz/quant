@@ -1,5 +1,7 @@
+
 import torch
 from torch import nn
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -9,12 +11,13 @@ torch.manual_seed(2019)
 TIME_STEP = 10  # RNN时间步长
 INPUT_SIZE = 1  # RNN输入尺寸
 INIT_LR = 0.02  # 初始学习率
-N_EPOCHS = 100  # 训练回数
+N_EPOCHS = 200  # 训练回数
 
 
 class RNN(nn.Module):
     def __init__(self):
         super(RNN, self).__init__()
+
         self.rnn = nn.RNN(
             input_size=INPUT_SIZE,
             hidden_size=32,  # RNN隐藏神经元个数

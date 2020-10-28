@@ -4,6 +4,7 @@ from datetime import time
 import numpy as np
 import pandas as pd
 import requests
+from sklearn.preprocessing import Normalizer
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 
@@ -43,6 +44,7 @@ def get_IC(factor, re_future, startdate, enddate):
 def standard(x, scaler=None, y=None):
     if scaler is None:
         scaler1 = StandardScaler()
+        # scaler1 = Normalizer()
         if y is None:
             x_std = scaler1.fit_transform(x)
         else:

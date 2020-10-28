@@ -445,6 +445,22 @@ all_ts_codes = \
     "000043.SZ"
 
 
+def get_money_flow(ts_codes, start_date, end_date):
+    stock_info = pd.read_csv('../data/calender.csv',converters={'cal_date': str})
+    stock_info = stock_info[(stock_info.is_open == 1) & (stock_info.cal_date >= start_date.replace('-', '', 2))
+                            & (stock_info.cal_date <= end_date.replace('-', '', 2))]
+    for index, item in stock_info.iterrows():
+        trade_date = datetime.datetime.strptime(item.cal_date, '%Y%m%d').strftime('%Y-%m-%d')
+        # 2020-10-26 18:48:41
+        # 沪深股票 (日)主力资金净流入率 (日)主力净流入资金 主力净流入量 ddx
+        # data = c.csd(ts_codes, "INFLOWRATE ,NETINFLOW,NETINVOLUME,DDX", trade_date, trade_date,
+        #              "N=-5,period=1,adjustflag=1,curtype=1,order=1,market=CNSESZ,Ispandas=1")
+        data = c.css(ts_codes, "INFLOWRATE,NETINFLOW,NETBUYVOL,DDX", "TradeDate="+trade_date+",N=-5,Ispandas=1")
+        data.rename(columns={'NETBUYVOL': 'NETINVOLUME'},inplace=True)
+        data['DATES'] = trade_date
+        init_choice_money_flow(data)
+
+
 def get_forecast_data(ts_codes, report_date):
     data = c.css(ts_codes,
                  "PROFITNOTICECHGPCTL,PROFITNOTICECHGPCTT, PROFITNOTICESTYLE,PROFITNOTICEDATE",
@@ -514,6 +530,10 @@ if __name__ == '__main__':
     loginresult = c.start("ForceLogin=1", '', mainCallback)
     tomorrow = (datetime.datetime.now().date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     lost_data = compare_choice_db(compare_date=tomorrow)
+
+    # today = datetime.datetime.now().strftime('%Y-%m-%d')
+    # get_money_flow(all_ts_codes, today, today)
+
     # report_array = generate_report_date_array('2020-08-31', '2020-12-31')
     # logging.info(report_array)
     # for i, report_date in enumerate(report_array):

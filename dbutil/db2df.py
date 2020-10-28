@@ -52,7 +52,10 @@ def get_suspend_df(ts_code, trade_date):
     return pd.read_sql(sql, engine)
 
 def init_tl_forecast(data):
-    df_current.to_sql(name='tl_forecast', con=engine, if_exists='append', index=False)
+    data.to_sql(name='tl_forecast', con=engine, if_exists='append', index=False)
+
+def init_choice_money_flow(data):
+    data.to_sql(name='choice_money_flow', con=engine, if_exists='append', index=True)
 
 def update_suspend_d(from_date=None, end_date=None):
     from_date_S = from_date
@@ -105,6 +108,11 @@ def update_basic(from_date=None, end_date=None):
                                             'volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,'
                                             'free_share,total_mv,circ_mv')
         df_current.to_sql(name='stock_basic', con=engine, if_exists='append', index=False)
+
+
+def get_money_flow(ts_code,date):
+    sql = f'select ddx from quant.choice_money_flow where CODES="{ts_code}" and DATES="{pd.to_datetime(date)}" limit 1'
+    return pd.read_sql(sql, engine)
 
 
 def update_forecast(from_date=None, end_date=None):
