@@ -518,7 +518,7 @@ def get_padding(result_optimal, length_padding):
 
 
 def get_optimal_list_ml(today_buy_candidate_list, result_l, buy_date, *args):
-    mlr = RandomForestRegressor(n_estimators=500)
+    mlr = RandomForestRegressor(n_estimators=100, n_jobs=-1, oob_score=True, max_features='sqrt')
     need_std = True
     IC_factors = ['pure_rtn']
     IC_factors.extend(factors_list)
@@ -734,8 +734,8 @@ def back_trade(buy_signal_dict, dp_all_range, positions, positions_df, head, tai
             start_date, '%Y%m%d')).days
 
         """根据因子优选当日购入的portfolio list，并返回当日潜在购买list对应的factors dataframe"""
-        today_buy_list, factors_today_bt = get_optimal_list(today_buy_candidate_list, result_trade, buy_date)
-        # today_buy_list, factors_today_bt = get_optimal_list_ml(today_buy_candidate_list, result_trade, buy_date)
+        # today_buy_list, factors_today_bt = get_optimal_list(today_buy_candidate_list, result_trade, buy_date)
+        today_buy_list, factors_today_bt = get_optimal_list_ml(today_buy_candidate_list, result_trade, buy_date)
         select_list.append((buy_date, today_buy_list))
         result_today = pd.DataFrame(
             columns=result_columns)
@@ -865,23 +865,23 @@ def calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos, sell_date
     global rtn_info_df
     """根据最新的end 日期 更新对冲指数数组"""
     dp = dp_all_range[(dp_all_range.trade_date >= buy_date.replace('-', '', 3)) & (
-            dp_all_range.trade_date <= sell_date)]
+            dp_all_range.trade_date <= sell_date)].sort_values('trade_date')
 
     if get_trade_strategy().buy == 'open' and get_trade_strategy().sell == 'close':
         """对冲指数变化"""
         if len(dp) > 1:
-            first_day_return500 = (dp.iloc[0].close - dp.iloc[0, :].open) * 100 / dp.iloc[0, :].pre_close
+            first_day_return500 = (dp.iloc[0].close - dp.iloc[0, :].open) * 100 / dp.iloc[0, :].open
             zz500_rtn = first_day_return500 + dp[1:]['pct_chg'].sum()
         else:
             zz500_rtn = 0
         """首日收益"""
-        first_day_return = (buyday_info.close - buyday_info.open) * 100 / buyday_info.pre_close
+        first_day_return = (buyday_info.close - buyday_info.open) * 100 / buyday_info.open
         """综合收益（做多）"""
         rtn = (first_day_return + dtfm.iloc[1:]['pct_chg'].sum())
 
     elif get_trade_strategy().buy == 'open' and get_trade_strategy().sell == 'open':
         if len(dp) > 1:
-            first_day_return500 = (dp.iloc[0].close - dp.iloc[0, :].open) * 100 / dp.iloc[0, :].pre_close
+            first_day_return500 = (dp.iloc[0].close - dp.iloc[0, :].open) * 100 / dp.iloc[0, :].open
             last_day_return500 = (dp.iloc[-1].open - dp.iloc[-1, :].pre_close) * 100 / dp.iloc[-1, :].pre_close
             if len(dp) > 2:
                 mid_days_return500 = dp[1:-1]['pct_chg'].sum()
@@ -891,7 +891,7 @@ def calc_return(buy_date, buyday_info, dp_all_range, dtfm, per_ts_pos, sell_date
         else:
             zz500_rtn = 0
         """首日收益"""
-        first_day_return = (buyday_info.close - buyday_info.open) * 100 / buyday_info.pre_close
+        first_day_return = (buyday_info.close - buyday_info.open) * 100 / buyday_info.open
         """卖出日收益"""
         last_day_return = (dtfm.iloc[-1].open - dtfm.iloc[-1].pre_close) * 100 / dtfm.iloc[-1].pre_close
         """综合收益（做多）"""
@@ -1459,6 +1459,7 @@ def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=T
                                                 scaler=None, y=result_pca[0:1].to_numpy())
         # pca.fit_transform(std_features)
     # pca.fit_transform(std_feature_all)
+
     end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
         days=IC_range)).strftime('%Y%m%d').__str__()
     """从最大日期倒退计算Factors IC"""
@@ -1747,7 +1748,7 @@ def init_param():
     global ratio, range_ic, residual, count, step, times, seed, buy_signal_cache, result_store, select_list
     select_list = []
     ratio = 5
-    range_ic = 22
+    range_ic = 20
     residual = 0
     count = 0
     step = 5
@@ -1900,14 +1901,14 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201029'  ## 计算截止日
+    end_date = '20201030'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 1)
     print(str(start_date_list))
-    trade_today = '20201028'  ## 当日
-    tomorrow = '20201029'
+    trade_today = '20201029'  ## 当日
+    tomorrow = '20201030'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
@@ -1917,7 +1918,7 @@ if __name__ == '__main__':
     pro = tn.get_pro()
     calender = get_calender(start_date, end_date)
     update_data()
-    dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str})
+    dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str}).sort_values('trade_date')
     positions = 80  # 预留20%仓位
     pos_rtn = pd.DataFrame(
         columns=['range_ic', 'ratio', 'residual', 'step', 'times', 'total_rtn', 'compound_total_rtn', 'rtn_year', 'average_pos',
