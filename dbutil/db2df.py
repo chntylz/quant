@@ -99,7 +99,7 @@ def update_basic(from_date=None, end_date=None):
     if end_date is None:
         end_date = datetime.datetime.now()
     else:
-        end_date = datetime.strptime(end_date, '%Y%m%d')
+        end_date = datetime.datetime.strptime(end_date, '%Y%m%d')
     while from_date < end_date:
         from_date += datetime.timedelta(days=1)
 
@@ -108,6 +108,7 @@ def update_basic(from_date=None, end_date=None):
                                             'volume_ratio,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,'
                                             'free_share,total_mv,circ_mv')
         df_current.to_sql(name='stock_basic', con=engine, if_exists='append', index=False)
+        print(len(df_current))
 
 
 def get_money_flow(ts_code,date):
