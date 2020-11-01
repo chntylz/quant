@@ -3,13 +3,15 @@ import logging
 import multiprocessing
 import os
 from random import *
-
-from sklearn.ensemble import RandomForestRegressor
+from boruta import BorutaPy
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import stats
 from sklearn.decomposition import PCA
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.svm import SVR
 
@@ -517,6 +519,91 @@ def get_padding(result_optimal, length_padding):
     return result_optimal
 
 
+def ic_score(y, y_predict):
+    return stats.spearmanr(y, y_predict, nan_policy='omit')[0]
+
+
+def get_optimal_list_ml1(today_buy_candidate_list, result_l, buy_date, *args):
+    global sum_support_week,sum_support
+    mlr = RandomForestRegressor(n_estimators=1000, n_jobs=-1, oob_score=True, max_features='sqrt')
+    IC_SCORE = make_scorer(ic_score, greater_is_better=True)
+    need_std = True
+    IC_factors = ['pure_rtn']
+    IC_factors.extend(factors_list)
+    scores_df_column = ['score', 'ndate', 'today']
+
+    scores_df = pd.DataFrame(
+        columns=scores_df_column)
+    factors_today = pd.DataFrame(columns=factors_list)
+    result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    # XY_train = result_optimal[IC_factors].dropna()
+
+    std_XY_train, Y_train, scaler, pca = get_std_factor(result_optimal, range_ic, step, times, need_std)
+
+    time_split = TimeSeriesSplit(5)
+
+    if std_XY_train is not None:
+        print(f'today is:{buy_date},data length is {Y_train.size}')
+        feat_selector = BorutaPy(mlr, n_estimators='auto', random_state=1, perc=90)
+        feat_selector.fit(std_XY_train, Y_train)
+        print('support:',feat_selector.support_)
+        print('support week:', feat_selector.support_weak_)
+        print('rank', feat_selector.ranking_)
+        sum_support = sum_support + feat_selector.support_.astype(int)
+        sum_support_week = sum_support_week + feat_selector.support_weak_.astype(int)
+        print(f'sum support:{sum_support}')
+        print(f'sum support week:{sum_support_week}')
+    #     score_model = cross_val_score(mlr, std_XY_train, Y_train, scoring='r2', cv=time_split)
+    #     print(score_model)
+    #
+    # ndate_dict = {}
+    # # 包括第一列为标准化的pure_rtn
+    # for buy_ts_info in today_buy_candidate_list:
+    #     ndate = buy_ts_info[0]
+    #     ts_code = buy_ts_info[1]
+    #     ndate_dict[ts_code] = ndate
+    #     factor_cache = result_store[(result_store.in_date == buy_date) & (result_store.code == ts_code) &
+    #                                 (result_store.pub_date == ndate)].loc[:, factors_list]
+    #     if len(factor_cache) > 0:
+    #         factors_today.loc[ts_code] = factor_cache.iloc[0]
+    #     else:
+    #         base_date = trade_date_cac(ndate, pred_head - 1, calender, -1)
+    #         start_date1 = trade_date_cac(ndate, pred_head - 5, calender, -1)
+    #
+    #         if start_date1[2] is None or base_date[2] is None:
+    #             continue
+    #         factors = extract_factors(ts_code=ts_code, start=start_date1[2].replace('-', '', 2),
+    #                                 end=base_date[2].replace('-', '', 2), ndate=ndate)
+    #         if factors is None:
+    #             continue
+    #         factors_today.loc[ts_code] = factors
+    # optimal_lists = []
+    # if std_XY_train is not None:
+    #     if len(factors_today) < ratio:
+    #         pointer = len(factors_today) - ratio
+    #         result_padding = get_padding(result_optimal, pointer * -1)
+    #         std_factors = get_std_factors(factors_today, result_padding, pca, scaler, need_std)
+    #     else:
+    #         empty_result = pd.DataFrame()
+    #         std_factors = get_std_factors(factors_today, empty_result, pca, scaler, need_std)
+    #
+    #     for index, item in std_factors.dropna().iterrows():
+    #         scores_df.loc[index] = [np.nan, ndate_dict.get(index), item.today]
+    #
+    #     y_predict_next = mlr.predict(std_factors.iloc[:,:-1])
+    #     scores_df['score'] = y_predict_next
+    #
+    #     buy_num = int(residual + (len(scores_df) / ratio))
+    #     optimal_df = scores_df.sort_values(by=['score'], ascending=False).iloc[0:buy_num, :]
+    #     optimal_df = optimal_df[optimal_df.today > 0]
+    #
+    #     for index, item in optimal_df.iterrows():
+    #         optimal_lists.append([item.ndate, index])
+    # return optimal_lists, factors_today
+
+
+
+
 def get_optimal_list_ml(today_buy_candidate_list, result_l, buy_date, *args):
     mlr = RandomForestRegressor(n_estimators=100, n_jobs=-1, oob_score=True, max_features='sqrt')
     need_std = True
@@ -743,8 +830,9 @@ def back_trade(buy_signal_dict, dp_all_range, positions, positions_df, head, tai
             start_date, '%Y%m%d')).days
 
         """根据因子优选当日购入的portfolio list，并返回当日潜在购买list对应的factors dataframe"""
+        # get_optimal_list_ml1(today_buy_candidate_list, result_trade, buy_date)
         today_buy_list, factors_today_bt = get_optimal_list(today_buy_candidate_list, result_trade, buy_date)
-        # today_buy_list, factors_today_bt = get_optimal_list_ml(today_buy_candidate_list, result_trade, buy_date)
+
         select_list.append((buy_date, today_buy_list))
         result_today = pd.DataFrame(
             columns=result_columns)
@@ -863,7 +951,7 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
                                    np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-                                   , np.nan]
+                                   , np.nan, np.nan,np.nan, np.nan]
     return result_trade
 
 
@@ -1051,9 +1139,14 @@ def save_datas():
 # factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
 #                 'pe_ttm','volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
 #                 'profit_score', 'related_socre', 'turnover_rate22', 'pct_change22']
+"""
+业绩增幅、市值、前5日换手率、昨日换手率、5日涨幅、前一日涨幅、
+动态pe、昨日量比、上市时间、前5日换手率标准差、前5日涨幅标准差、公告日距离公告周期时间
+前三周期公告评分，增幅对比本季已发布公告预增平均值的比值，当日发布预增股票的数量,昨日中证500涨跌幅
+"""
 factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm', 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-                'profit_score', 'related_socre', 'num_forecast', 'beta0']
+                'profit_score', 'related_socre', 'num_forecast', 'beta0','beta5','beta5std', 'ddx']
 
 
 def get_factors(result_in):
@@ -1242,7 +1335,7 @@ def extract_factors(ts_code, start, end, ndate):
         ddx = 0
     date_list, key = get_buy_signal_cache_key(pred_head, yeji)
     signal_cache = buy_signal_cache.get_cache(key)
-    if ndate.replace('-','',2) <= trade_today:
+    if ndate.replace('-', '', 2) <= trade_today:
         num_forecast = len(signal_cache[find_buy_day(ts_code, ndate, 0, calender)[1]])
     else:
         num_forecast = len(yeji_today)
@@ -1253,7 +1346,7 @@ def extract_factors(ts_code, start, end, ndate):
     #                related_score, s_type, intime, origin]
     factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
                    volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
-                   related_score, num_forecast, beta0]
+                   related_score, num_forecast, beta0, beta5, beta5std, ddx]
 
     return factor_list
 
@@ -1426,6 +1519,46 @@ def change_forecast(str):
         return 0
     elif str == '预增' or str == 22:
         return 2
+
+
+def get_std_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=True):
+    """输入：历史result数据，range，step，times"""
+    """输出：A.三 None：交易数据不足50条|B. std_features数组（按range，step，times）来划分"""
+    length_data = len(history_data)
+    if length_data < 50:
+        return None, None, None,None
+    sort_data = history_data.sort_values(by='pub_date')
+    start_ndate = sort_data.iloc[0, :].pub_date
+    end_ndate = sort_data.iloc[-1, :].pub_date
+    length_days = (datetime.datetime.strptime(
+        tran_dateformat(end_ndate), '%Y-%m-%d') - datetime.datetime.strptime(tran_dateformat(start_ndate),
+                                                                             '%Y-%m-%d')).days
+    pca = PCA(n_components=10)
+    IC_factors = ['pure_rtn']
+    IC_factors.extend(factors_list)
+    IC_factors.append('count')
+
+    if length_days >= IC_range + IC_step * IC_times:
+
+        start_date2 = history_data['out_date'].iloc[-1]
+        begin_date = (datetime.datetime.strptime(start_date2.replace('-', '', 3), '%Y%m%d') - datetime.timedelta(
+            days=IC_range + IC_step*IC_times + 5)).strftime('%Y%m%d').__str__()
+        result_pca = history_data[
+            (history_data['pub_date'] <= tran_dateformat(start_date2)) & (
+                    history_data['pub_date'] > tran_dateformat(begin_date))].copy()
+        result_pca = result_pca.dropna(subset=factors_list)
+        std_feature_all, scaler = util.standard(result_pca[IC_factors[1:-1]].to_numpy(),
+                                                scaler=None, y=result_pca[0:1].to_numpy())
+
+    else:
+        IC_times = None
+        start_date2 = history_data['out_date'].iloc[-1]
+        result_pca = history_data.copy()
+        result_pca = result_pca.dropna(subset=factors_list)
+        std_feature_all, scaler = util.standard(result_pca[IC_factors[1:-1]].to_numpy(),
+                                                scaler=None, y=result_pca[0:1].to_numpy())
+
+    return std_feature_all, result_pca.pure_rtn.to_numpy(), scaler, pca
 
 
 def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=True):
@@ -1761,7 +1894,7 @@ def init_param():
     residual = 0
     count = 0
     step = 5
-    times = 5
+    times = 10
     seed = np.random.seed()
     # buy_signal_cache.load_cache('./data/buysignal.csv')
     result_store = read_result('./data/result_store1.csv')
@@ -1906,18 +2039,20 @@ if __name__ == '__main__':
     seed = np.random.seed()
     buy_signal_cache = BuySignalCache()
     result_store = read_result('./data/result_store1.csv')
+    sum_support = np.zeros(len(factors_list))
+    sum_support_week = np.zeros(len(factors_list))
 
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201030'  ## 计算截止日
+    end_date = '20201102'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 10)
     print(str(start_date_list))
-    trade_today = '20201029'  ## 当日
-    tomorrow = '20201030'
+    trade_today = '20201030'  ## 当日
+    tomorrow = '20201102'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
@@ -1943,44 +2078,48 @@ if __name__ == '__main__':
     yeji_array = []
     start_dates = []
     des_result_array = []
-    with multiprocessing.Pool(processes=8) as pool:
-        for li, date in enumerate(start_date_list):
-            # yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
-            yeji_array.append([yeji_all, yeji_all[
-                (yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]])
-            for i in range(0, 1, 1):  # ratio
-                for j in range(0, 1, 1):  # range
-                    for k in range(0, 10, 10):  # residual*10
-                        for l in range(0, 1, 1):  # step
-                            for m in range(0, 20, 1):  # step
-                                ratio_i = i
-                                range_j = j
-                                residual_k = k * 0.1
-                                step_l = l
-                                times_m = m
-                                index_dict = {'ratio': ratio_i, 'range_ic': range_j, 'residual': residual_k, 'step': step_l,
-                                              'times': times_m}
-                                index_array.append(index_dict)
-                                start_dates.append(date)
-                                result_tuple = pool.apply_async(func=trade_test, args=(
-                                    yeji_array[li][1], positions, ratio_i, range_j, residual_k, step_l, times_m))
-                                results.append(result_tuple)
+    # with multiprocessing.Pool(processes=8) as pool:
+    #     for li, date in enumerate(start_date_list):
+    #         # yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
+    #         yeji_array.append([yeji_all, yeji_all[
+    #             (yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]])
+    #         for i in range(0, 1, 1):  # ratio
+    #             for j in range(0, 1, 1):  # range
+    #                 for k in range(0, 10, 10):  # residual*10
+    #                     for l in range(0, 1, 1):  # step
+    #                         for m in range(0, 20, 1):  # step
+    #                             ratio_i = i
+    #                             range_j = j
+    #                             residual_k = k * 0.1
+    #                             step_l = l
+    #                             times_m = m
+    #                             index_dict = {'ratio': ratio_i, 'range_ic': range_j, 'residual': residual_k, 'step': step_l,
+    #                                           'times': times_m}
+    #                             index_array.append(index_dict)
+    #                             start_dates.append(date)
+    #                             result_tuple = pool.apply_async(func=trade_test, args=(
+    #                                 yeji_array[li][1], positions, ratio_i, range_j, residual_k, step_l, times_m))
+    #                             results.append(result_tuple)
+    #
+    #     for n, d in enumerate(results):
+    #         result, positions_dataframe = d.get()
+    #         index_dict = index_array[n]
+    #         start_date_i = start_dates[n]
+    #         des_result_tuple = describe_result(result, positions_dataframe, index_dict['ratio'], index_dict['range_ic'],
+    #                                            index_dict['residual'], index_dict['step'], index_dict['times'],
+    #                                            start_date_i)
+    #         des_result_array.append(des_result_tuple)
 
-        for n, d in enumerate(results):
-            result, positions_dataframe = d.get()
-            index_dict = index_array[n]
-            start_date_i = start_dates[n]
-            des_result_tuple = describe_result(result, positions_dataframe, index_dict['ratio'], index_dict['range_ic'],
-                                               index_dict['residual'], index_dict['step'], index_dict['times'],
-                                               start_date_i)
-            des_result_array.append(des_result_tuple)
+    for i in range(1):
+        result, positions_dataframe = trade_test(yeji, positions, 0, 0, 0, 0)
+        results.append(result)
+        des_result_tuple = describe_result(result, positions_dataframe, 0, 0, 0, 0, 0, start_date)
+        des_result_array.append(des_result_tuple)
 
-    # for i in range(1):
-    #     result, positions_dataframe = trade_test(yeji, positions, 0, 0, 0, 0)
-    #     results.append(result)
-    #     des_result_tuple = describe_result(result, positions_dataframe, 0, 0, 0, 0, 0, start_date)
-    #     des_result_array.append(des_result_tuple)
-
+    fe = pd.Series(index=factors_list, data=sum_support)
+    fe_week = pd.Series(index=factors_list, data=sum_support_week)
+    fe_total = fe_week / 2 + fe
+    print(fe_total)
     # print("*********最大收益:", max)
     # print("*********平均收益:", pos_rtn['total_rtn'].sum() / len(pos_rtn))
     # result.to_csv(
