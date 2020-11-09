@@ -2,6 +2,7 @@ import logging
 
 from choice.EmQuantAPI import *
 from dbutil.db2df import *
+import numpy as np
 
 # from forecast_strategy import read_yeji
 logging.getLogger().setLevel(logging.INFO)
@@ -526,13 +527,42 @@ def compare_choice_db(from_date='2020-06-01', end_date='2020-12-31', compare_dat
     return append_data
 
 
+def save_st(start_date=None, end_date=None):
+    if start_date is None:
+        start_date = '2019-09-01'
+    if end_date is None:
+        end_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    result = pd.DataFrame(columns=['ts_code', 'name', 'date', 'type'])
+    while start_date <= end_date:
+        data = c.sector("001017", start_date)
+        data_np = np.array(data.Data)
+        data_df = pd.DataFrame(data=data_np.reshape(int(len(data_np) / 2), 2), columns=['ts_code', 'name'])
+        data_df['date'] = start_date
+        data_df['type'] = 'st'
+
+        data1 = c.sector("001018", start_date)
+        data_np1 = np.array(data1.Data)
+        data_df1 = pd.DataFrame(data=data_np1.reshape(int(len(data_np1) / 2), 2), columns=['ts_code', 'name'])
+        data_df1['date'] = start_date
+        data_df1['type'] = '*st'
+
+        result = result.append(data_df)
+        result = result.append(data_df1)
+        print(f'finish:{start_date}')
+        start_date = (datetime.datetime.strptime(start_date,'%Y-%m-%d') + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+    result.to_csv('../data/st_stock.csv', index=False, mode='a', header=False)
+
+
 if __name__ == '__main__':
     loginresult = c.start("ForceLogin=1", '', mainCallback)
     tomorrow = (datetime.datetime.now().date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     lost_data = compare_choice_db(compare_date=tomorrow)
 
-    # today = datetime.datetime.now().strftime('%Y-%m-%d')
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
     # get_money_flow(all_ts_codes, today, today)
+
+    save_st(today,today)
 
     # report_array = generate_report_date_array('2020-08-31', '2020-12-31')
     # logging.info(report_array)

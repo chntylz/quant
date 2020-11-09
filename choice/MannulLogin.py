@@ -21,7 +21,8 @@ elif data1 == 'Darwin':
     lj = c.setserverlistdir("libs/" + system1)
 else:
     pass
+
 #填上用户名，密码，和有效的邮箱，运行返回成功， 注意：email=字样不要省略；
-data = c.manualactivate("17669648952", "myh123", "email=")
+data = c.manualactivate("18969189186", "163yno", "email=")
 if data.ErrorCode != 0:
     print ("manualactivate failed, ", data.ErrorMsg)

@@ -2,6 +2,7 @@
   <dictionary name="apple">
     <words>
       <w>begindate</w>
+      <w>coef</w>
       <w>datas</w>
       <w>enddate</w>
       <w>ndate</w>

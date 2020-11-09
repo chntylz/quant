@@ -156,12 +156,20 @@ def check_loan(ts_code):
 
 newstock = []
 
+st_stock_list = pd.read_csv('./data/st_stock.csv')
+
+
+def check_st(code, date):
+    if len(st_stock_list[(st_stock_list.ts_code == code) & (st_stock_list.date == date)]) > 0:
+        print(f'{code,date} in st list')
+        return True
+    else:
+        return False
+
 
 def get_price_limit(code, date):
-    listdate = stock_info.loc[stock_info['ts_code'] == code]
+    listdate = stock_info.loc[stock_info['ts_code'] == code]    # 获取股票上市日
     if len(listdate) == 0:
-        # raise RuntimeWarning('stock_info中缺少该记录!')
-        ## TODO:: 需要确定这些记录的上市时间从哪里获取
         logging.info('stock_info中缺少该记录!', code)
         listdate = pd.DataFrame(data=['20000101'], columns=['list_date'])
     listdate = listdate.iloc[0, :]
@@ -172,12 +180,15 @@ def get_price_limit(code, date):
             newstock.append(code)
             return 10  # 没有涨跌幅限制
         coef = 2  # 首次涨停跌限制为20%
-    if code.startswith('688'):  # 科创板涨跌停限制20%
-        coef = 2
-    elif code.startswith('300') and date >= '20200824':  # 20年8月24日后创业板涨跌幅变化为20%
-        coef = 2
     else:
-        coef = 1
+        if check_st(code, date):  # 检查是否st
+            coef = 0.5
+        elif code.startswith('688'):  # 科创板涨跌停限制20%
+            coef = 2
+        elif code.startswith('300') and date >= '20200824':  # 20年8月24日后创业板涨跌幅变化为20%
+            coef = 2
+        else:
+            coef = 1
     return coef
 
 
@@ -225,16 +236,17 @@ def check_end_day(start_info, end_info):
     strategy = get_trade_strategy()
     if start_info.trade_date >= end_info.trade_date:
         return False
+    coef = get_price_limit(end_info.ts_code, end_info.trade_date)
     if strategy.longshort == 'long':
         if strategy.sell == 'open':
-            if (end_info.high - end_info.pre_close) / end_info.pre_close < -0.098 or (  # 全天跌停,无法卖出
-                    end_info.open - end_info.pre_close) / end_info.pre_close > 0.098:  # 开盘涨停，不卖了
+            if (end_info.high - end_info.pre_close) / end_info.pre_close < -0.098 * coef or (  # 一字跌停,无法卖出
+                    end_info.low - end_info.pre_close) / end_info.pre_close > 0.098 * coef:  # 一字涨停，不卖了
                 return False
             else:
                 return True
         elif strategy.sell == 'close':
-            if ((end_info.high - end_info.pre_close) / end_info.pre_close < -0.098) or (  # 全天跌停，无法卖出
-                    (end_info.close - end_info.pre_close) / end_info.pre_close > 0.098):  # 收盘涨停，等第二天再卖
+            if ((end_info.high - end_info.pre_close) / end_info.pre_close < -0.098 * coef) or (  # 一字跌停，无法卖出
+                    (end_info.close - end_info.pre_close) / end_info.pre_close > 0.098 * coef):  # 收盘涨停，等第二天再卖
                 return False
             else:
                 return True
@@ -244,14 +256,14 @@ def check_end_day(start_info, end_info):
         if not check_loan(end_info.ts_code):
             return False
         if strategy.sell == 'open':
-            if (end_info.high - end_info.pre_close) / end_info.pre_close < -0.098 or (  # 全天跌停,不卖了，后续再买券
-                    end_info.open - end_info.pre_close) / end_info.pre_close > 0.098:  # 开盘涨停，无法买入还券
+            if (end_info.low - end_info.pre_close) / end_info.pre_close < -0.098 * coef or (  # 一字跌停,不卖了，后续再买券
+                    end_info.high - end_info.pre_close) / end_info.pre_close > 0.098 * coef:  # 一字涨停，无法买入还券
                 return False
             else:
                 return True
         elif strategy.sell == 'close':
-            if ((end_info.close - end_info.pre_close) / end_info.pre_close < -0.098) or (  # 全天跌停，不卖了，后续再买券
-                    (end_info.high - end_info.pre_close) / end_info.pre_close > 0.098):  # 全天涨停，无法买入还券
+            if ((end_info.close - end_info.pre_close) / end_info.pre_close < -0.098 * coef) or (  # 收盘跌停，不卖了，后续再买券
+                    (end_info.high - end_info.pre_close) / end_info.pre_close > 0.098 * coef):  # 一字涨停，无机会买入还券
                 return False
             else:
                 return True
@@ -950,8 +962,7 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         #                            np.nan, np.nan]
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-                                   , np.nan, np.nan,np.nan, np.nan]
+                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     return result_trade
 
 
@@ -1142,11 +1153,12 @@ def save_datas():
 """
 业绩增幅、市值、前5日换手率、昨日换手率、5日涨幅、前一日涨幅、
 动态pe、昨日量比、上市时间、前5日换手率标准差、前5日涨幅标准差、公告日距离公告周期时间
-前三周期公告评分，增幅对比本季已发布公告预增平均值的比值，当日发布预增股票的数量,昨日中证500涨跌幅
+前三周期公告评分，增幅对比本季已发布公告预增平均值的比值，昨日中证500涨跌幅
 """
-factors_list = ['zfpx', 'size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
+factors_list = ['size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm', 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-                'profit_score', 'related_socre', 'num_forecast', 'beta0','beta5','beta5std', 'ddx']
+                'profit_score', 'related_score']
+
 
 
 def get_factors(result_in):
@@ -1335,18 +1347,18 @@ def extract_factors(ts_code, start, end, ndate):
         ddx = 0
     date_list, key = get_buy_signal_cache_key(pred_head, yeji)
     signal_cache = buy_signal_cache.get_cache(key)
-    if ndate.replace('-', '', 2) <= trade_today:
-        num_forecast = len(signal_cache[find_buy_day(ts_code, ndate, 0, calender)[1]])
-    else:
-        num_forecast = len(yeji_today)
+    # if ndate.replace('-', '', 2) <= trade_today:
+    #     num_forecast = len(signal_cache[find_buy_day(ts_code, ndate, 0, calender)[1]])
+    # else:
+    #     num_forecast = len(yeji_today)
 
 
     # factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
     #                volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
     #                related_score, s_type, intime, origin]
-    factor_list = [zfpx, size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
+    factor_list = [size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
                    volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
-                   related_score, num_forecast, beta0, beta5, beta5std, ddx]
+                   related_score]
 
     return factor_list
 
@@ -1699,6 +1711,7 @@ def calc_factors(result_factor, times=None, period=40, step=5):
         # print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
         # result_temp = get_factors(result_temp)
         result_temp_nona = result_temp[IC_factors[:-1]].dropna()
+
         std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
 
         # std_feature = pca.transform(std_feature1)
@@ -1807,6 +1820,7 @@ def draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ra
     plt.title(title, fontsize=8)
     plt.grid()
     plt.plot(pd.DatetimeIndex(total_net_date_value.index), total_net_date_value.values)
+    plt.setp(plt.gca().get_xticklabels(), rotation=50)
     # result4 = read_result('./data/result1620-10-11factors.csv')
     # result4 = result4[50:]
     # compare_plt(result4, '10ratio 13factor')
@@ -2034,7 +2048,7 @@ if __name__ == '__main__':
     count = 0
     range_ic = 12
     step = 5
-    times = 5
+    times = 10
     residual = 0
     seed = np.random.seed()
     buy_signal_cache = BuySignalCache()
@@ -2045,14 +2059,14 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201102'  ## 计算截止日
-    start_date_list = generate_start_date_list('20190901', '20190918', 10)
+    end_date = '20201109'  ## 计算截止日
+    start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20201030'  ## 当日
-    tomorrow = '20201102'
+    trade_today = '20201106'  ## 当日
+    tomorrow = '20201109'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
@@ -2061,12 +2075,7 @@ if __name__ == '__main__':
     pred_head = 0  # 公告发布日后pred_head日开盘价买入
     pro = tn.get_pro()
     calender = get_calender(start_date, end_date)
-    flags = pd.read_csv('./data/flags.csv', index_col=0)
-    today_update_flag = flags[(flags.index == datetime.datetime.now().date().strftime('%Y-%m-%d')) & (flags.item == 'update_data')]
-    if len(today_update_flag) == 0:
-        update_data()
-        flags.loc[datetime.datetime.now().date()] = ['update_data', True]
-        flags.to_csv('./data/flags.csv')
+    update_data()
     dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str}).sort_values('trade_date')
     positions = 80  # 预留20%仓位
     pos_rtn = pd.DataFrame(
@@ -2087,7 +2096,7 @@ if __name__ == '__main__':
     #             for j in range(0, 1, 1):  # range
     #                 for k in range(0, 10, 10):  # residual*10
     #                     for l in range(0, 1, 1):  # step
-    #                         for m in range(0, 20, 1):  # step
+    #                         for m in range(0, 1, 1):  # step
     #                             ratio_i = i
     #                             range_j = j
     #                             residual_k = k * 0.1
@@ -2119,7 +2128,8 @@ if __name__ == '__main__':
     fe = pd.Series(index=factors_list, data=sum_support)
     fe_week = pd.Series(index=factors_list, data=sum_support_week)
     fe_total = fe_week / 2 + fe
-    print(fe_total)
+    # print(fe_total)
+
     # print("*********最大收益:", max)
     # print("*********平均收益:", pos_rtn['total_rtn'].sum() / len(pos_rtn))
     # result.to_csv(

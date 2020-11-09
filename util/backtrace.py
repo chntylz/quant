@@ -17,7 +17,8 @@ if __name__ == '__main__':
                     ['2020-10-27', '002810.SZ'], ['2020-10-27', '002675.SZ'], ['2020-10-27', '600177.SH'],
                     ['2020-10-28', '002475.SZ'], ['2020-10-28', '002940.SZ'], ['2020-10-28', '002414.SZ'],
                     ['2020-10-28', '603392.SH'], ['2020-10-29', '002244.SZ'], ['2020-10-30', '002612.SZ'],
-                    ['2020-10-30', '002165.SZ'], ['2020-10-30', '002409.SZ'], ['2020-10-30', '600026.SH']]
+                    ['2020-10-30', '002165.SZ'], ['2020-10-30', '002409.SZ'], ['2020-10-30', '600026.SH'],
+                    ['2020-10-31', '600428.SH']]
     buy_df = pd.DataFrame(data=myh_buy_list, columns=['pub_date', 'code', ])
 
     result = pd.read_csv('../data/result_store1.csv', converters={'pub_date': str, 'out_date': str, 'in_date': str})
@@ -41,6 +42,7 @@ if __name__ == '__main__':
     sum_rtn = backtrace_df.groupby('out_date').agg("sum")
     mean_rtn = backtrace_df.groupby('out_date').agg("mean")
     sum_rtn['sum_rtn'] = sum_rtn.rtn.cumsum()
+    sum_rtn['sum_pure_rtn'] = sum_rtn.pure_rtn.cumsum()
     mean_rtn['sum_pure_rtn'] = mean_rtn.pure_rtn.cumsum()
     zz_500_df['sum_500rtn'] = zz_500_df.zz500rtn.cumsum()
 
@@ -53,7 +55,8 @@ if __name__ == '__main__':
     plt.legend()
     plt.show()
     plt.plot(pd.to_datetime(mean_rtn.index), mean_rtn.sum_pure_rtn * 100, label='sum pure rtn')
-    plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_rtn * 100, label='sum rtn')
     plt.plot(pd.to_datetime(zz_500_df.trade_date), zz_500_df.sum_500rtn * 100, label='500 rtn')
+    plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_rtn * 100, label='sum rtn')
+    plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_pure_rtn * 100, label='sum pure rtn')
     plt.legend()
     plt.show()
