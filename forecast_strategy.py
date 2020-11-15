@@ -962,7 +962,8 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         #                            np.nan, np.nan]
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
+                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
+                                   np.nan, np.nan]
     return result_trade
 
 
@@ -1157,7 +1158,7 @@ def save_datas():
 """
 factors_list = ['size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm', 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-                'profit_score', 'related_score']
+                'profit_score', 'related_score', 'ddx', 'beta0']
 
 
 
@@ -1358,7 +1359,7 @@ def extract_factors(ts_code, start, end, ndate):
     #                related_score, s_type, intime, origin]
     factor_list = [size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
                    volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
-                   related_score]
+                   related_score, ddx, beta0]
 
     return factor_list
 
@@ -1911,7 +1912,7 @@ def init_param():
     times = 10
     seed = np.random.seed()
     # buy_signal_cache.load_cache('./data/buysignal.csv')
-    result_store = read_result('./data/result_store1.csv')
+    result_store = read_result('./data/result_store2.csv')
 
 
 def save_param(result_local):
@@ -1920,7 +1921,7 @@ def save_param(result_local):
     result_save = result_local.drop(columns=['optimal']).append(result_store)
     result_save = result_save.append(result_store)
     result_save.drop_duplicates(subset=['code', 'pub_date', 'in_date'], keep=False, inplace=True)
-    result_save.to_csv('./data/result_store1.csv', index=False, header=0, mode='a')
+    result_save.to_csv('./data/result_store2.csv', index=False, header=0, mode='a')
 
 
 def trade_test(yeji_l, positions, ratio_i1, range_j1, residual_k1, step_l1, times_l1=0,*args, **kwargs) -> tuple:
@@ -2052,18 +2053,18 @@ if __name__ == '__main__':
     residual = 0
     seed = np.random.seed()
     buy_signal_cache = BuySignalCache()
-    result_store = read_result('./data/result_store1.csv')
+    result_store = read_result('./data/result_store2.csv')
     sum_support = np.zeros(len(factors_list))
     sum_support_week = np.zeros(len(factors_list))
 
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201109'  ## 计算截止日
+    end_date = '20201110'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20201106'  ## 当日
-    tomorrow = '20201109'
+    trade_today = '20201109'  ## 当日
+    tomorrow = '20201110'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)

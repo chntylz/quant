@@ -23,6 +23,7 @@ else:
     pass
 
 #填上用户名，密码，和有效的邮箱，运行返回成功， 注意：email=字样不要省略；
-data = c.manualactivate("18969189186", "163yno", "email=")
+c.setserverlistdir('/Users/apple/PycharmProjects/QuantD1/choice/libs/mac/')
+data = c.manualactivate("13656665811", "163yno", "email=ttgoding@163.com")
 if data.ErrorCode != 0:
     print ("manualactivate failed, ", data.ErrorMsg)

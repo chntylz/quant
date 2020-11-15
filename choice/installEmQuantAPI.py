@@ -35,6 +35,7 @@ def installEmQuantAPI():
     else:
         print( "Error: EmQuantApi install fail!(in get pth)")
 
+
 if __name__ == "__main__":
     installEmQuantAPI()
 

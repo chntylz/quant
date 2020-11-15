@@ -68,9 +68,9 @@ def fit_standard(x):
     return x_std, scaler
 
 
-def IC(x, re):
+def IC(x, re, num=50):
     IC = []
-    if not (np.sum(np.logical_and(~np.isnan(x), ~np.isnan(re))) > 50):
+    if not (np.sum(np.logical_and(~np.isnan(x), ~np.isnan(re))) > num):
         return None
     ind = np.where(np.logical_and(~np.isnan(x), ~np.isnan(re)))[0]
     x = x[ind]
