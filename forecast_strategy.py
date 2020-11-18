@@ -536,7 +536,7 @@ def ic_score(y, y_predict):
 
 
 def get_optimal_list_ml1(today_buy_candidate_list, result_l, buy_date, *args):
-    global sum_support_week,sum_support
+    global sum_support_week, sum_support
     mlr = RandomForestRegressor(n_estimators=1000, n_jobs=-1, oob_score=True, max_features='sqrt')
     IC_SCORE = make_scorer(ic_score, greater_is_better=True)
     need_std = True
@@ -612,8 +612,6 @@ def get_optimal_list_ml1(today_buy_candidate_list, result_l, buy_date, *args):
     #     for index, item in optimal_df.iterrows():
     #         optimal_lists.append([item.ndate, index])
     # return optimal_lists, factors_today
-
-
 
 
 def get_optimal_list_ml(today_buy_candidate_list, result_l, buy_date, *args):
