@@ -33,9 +33,19 @@ class GRUNet(nn.Module):
     def forward(self, x, h):
         r_out, hidden = self.rnn(x, h)
         # print(r_out.data.shape)
-        out = self.out(r_out.data)
+        out, len_list = rnn_utils.pad_packed_sequence(r_out, batch_first=True)
+
+        hidden_seq = extract_pad_sequence(out,len_list)
+        out = self.out(hidden_seq)
         # print(out.shape)
         return out, hidden
+
+
+def extract_pad_sequence(o, lens):
+    result_list = []
+    for index, d in enumerate(o):
+        result_list.append(d[0: lens[index]])
+    return torch.cat(result_list,dim=0)
 
 
 class ForecastDataset(Dataset):
@@ -55,8 +65,8 @@ class ForecastDataset(Dataset):
 class RnnForecast:
     def __init__(self):
         self.seed = 31
-        self.EPOCH = 10
-        self.LR = 0.001
+        self.EPOCH = 16
+        self.LR = 0.0003
         self.period_days = 60
         self.train_date_periods = 50
         self.test_date_pad_len = 5
@@ -186,12 +196,12 @@ class RnnForecast:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32).to(device_l),
                                                            data_len, batch_first=True, enforce_sorted=False).to(
                     self.device)
-                pack_y = rnn_utils.pack_padded_sequence(torch.as_tensor(data[1], dtype=torch.float32),
-                                                        data_len, batch_first=True, enforce_sorted=False).to(device_l)
+                test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(device_l), data_len)
+
                 output, h_state = rnn_local(pack_data, h_state)
                 h_state = h_state.detach()
-                loss_l = loss(torch.squeeze(output), torch.squeeze(pack_y.data))
-                util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(pack_y.data).detach().numpy())
+                loss_l = loss(torch.squeeze(output), torch.squeeze(test_rtn))
+                # util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(test_rtn).detach().numpy())
                 optimizer_local.zero_grad()  # clear gradients for this training step
                 loss_l.backward()  # back propagation, compute gradients
                 optimizer_local.step()
@@ -206,8 +216,7 @@ class RnnForecast:
             for data, data_len in test_loader_l:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
                                                            data_len, batch_first=True, enforce_sorted=False)
-                pack_y = rnn_utils.pack_padded_sequence(torch.as_tensor(data[1], dtype=torch.float32),
-                                                        data_len, batch_first=True, enforce_sorted=False)
+                test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(device_l), data_len)
                 output, _ = rnn_local(pack_data, h_state)
                 sorindex = []
                 sum_idx = -1
@@ -216,7 +225,7 @@ class RnnForecast:
                     sorindex.append(sum_idx)
                 pre_indices = torch.tensor(sorindex)
                 pre_test_returns.append(torch.index_select(output, dim=0, index=pre_indices).detach())
-                test_returns.append(torch.index_select(pack_y.data, dim=0, index=pre_indices).detach())
+                test_returns.append(torch.index_select(test_y, dim=0, index=pre_indices).detach())
                 # loss = loss_func(torch.squeeze(output), torch.squeeze(pack_y.data))
                 # ic = util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(pack_y.data).detach().numpy())
 
@@ -259,5 +268,6 @@ if __name__ == '__main__':
             for i, itm in opt_list.iterrows():
                 result_back_test.loc[itm['index'], 'is_real'] = 1
             print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, loss is {model_loss} \033[0m')
+            print(opt_list)
             result_info.loc[item] = [opt_list.pure_rtn.mean(), ic, model_loss]
 
