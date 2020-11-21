@@ -8,7 +8,7 @@ from sklearn.preprocessing import MinMaxScaler
 from torch import nn
 from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
-
+from matplotlib import pyplot as plt
 import forecast_strategy
 from util import util
 
@@ -64,10 +64,10 @@ class ForecastDataset(Dataset):
 
 class RnnForecast:
     def __init__(self):
-        self.seed = 31
-        self.EPOCH = 16
-        self.LR = 0.0003
-        self.period_days = 60
+        self.seed = 3
+        self.EPOCH = 30
+        self.LR = 0.001
+        self.period_days = 5
         self.train_date_periods = 50
         self.test_date_pad_len = 5
         self.batch_size = 8
@@ -159,9 +159,11 @@ class RnnForecast:
         X_l, Y_l, result_run_l = self.prepare_data(result_l)
         train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result = \
             self.get_in_date_dataSet(result_run_l, buy_date)
+        # logging.info(f'train size is {train_end_index_l - train_start_index_l}')
 
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
+
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
 
@@ -172,8 +174,6 @@ class RnnForecast:
                                     drop_last=True)
         test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
 
-        # LR = 0.0001
-        # EPOCH = 32
         if last_rnn is not None and last_hidden is not None:
             h_state = last_hidden
             rnn_local = last_rnn
@@ -247,7 +247,7 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
-    begin_date = '2020-01-28'
+    begin_date = '2019-11-20'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
@@ -269,5 +269,6 @@ if __name__ == '__main__':
                 result_back_test.loc[itm['index'], 'is_real'] = 1
             print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, loss is {model_loss} \033[0m')
             print(opt_list)
-            result_info.loc[item] = [opt_list.pure_rtn.mean(), ic, model_loss]
-
+            result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
+    plt.plot(pd.to_datetime(result_info.index), result_info.rtn.cumsum())
+    plt.show()
