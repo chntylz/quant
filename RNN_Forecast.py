@@ -35,7 +35,7 @@ class GRUNet(nn.Module):
         # print(r_out.data.shape)
         out, len_list = rnn_utils.pad_packed_sequence(r_out, batch_first=True)
 
-        hidden_seq = extract_pad_sequence(out,len_list)
+        hidden_seq = extract_pad_sequence(out, len_list)
         out = self.out(hidden_seq)
         # print(out.shape)
         return out, hidden
@@ -45,7 +45,7 @@ def extract_pad_sequence(o, lens):
     result_list = []
     for index, d in enumerate(o):
         result_list.append(d[0: lens[index]])
-    return torch.cat(result_list,dim=0)
+    return torch.cat(result_list, dim=0)
 
 
 class ForecastDataset(Dataset):
@@ -63,12 +63,12 @@ class ForecastDataset(Dataset):
 
 
 class RnnForecast:
-    def __init__(self):
+    def __init__(self, train_days_size=90, period_days=9):
         self.seed = 3
         self.EPOCH = 30
         self.LR = 0.001
-        self.period_days = 4
-        self.train_date_periods = 30
+        self.period_days = period_days
+        self.train_date_periods = train_days_size
         self.test_date_pad_len = 5
         self.batch_size = 8
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -135,7 +135,6 @@ class RnnForecast:
             end_index = len(re[(re.out_date >= enddate)]) if len(re[(re.out_date >= enddate)]) > 0 else 0
 
         return len(re) - start_index, len(re) - end_index
-
 
     def get_in_date_dataSet(self, re: pd.DataFrame, buy_date):
         if len(re[re.in_date == buy_date]) >= 5:
@@ -216,7 +215,7 @@ class RnnForecast:
         with torch.no_grad():
             for data, data_len in test_loader_l:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
-                                                           data_len, batch_first=True, enforce_sorted=False).\
+                                                           data_len, batch_first=True, enforce_sorted=False). \
                     to(self.device)
                 test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(device_l), data_len)
                 output, _ = rnn_local(pack_data, h_state)
@@ -233,7 +232,7 @@ class RnnForecast:
 
             # print(pre_test_returns,test_returns)
             final_ic = util.IC(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy(),
-                               torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.test_date_pad_len-1)
+                               torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.test_date_pad_len - 1)
             print(f'\033[1;31mpredict IC:{final_ic} \033[0m')
             print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
             print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
@@ -249,7 +248,7 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
-    begin_date = '2019-11-20'
+    begin_date = '2020-01-20'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
@@ -258,19 +257,23 @@ if __name__ == '__main__':
     hidden = None
     device_l = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rnn = GRUNet(len(forecast_strategy.factors_list)).to(device_l)
-    rnn_forecast = RnnForecast()
-    ic_list = []
-    result_info = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
-    for idx, item in enumerate(buy_date_list):
-        result_in = result[result.in_date <= item]
-        opt_list, ic, model_loss, rnn, hidden = rnn_forecast.get_buy_list(result_in, item, last_rnn=rnn,
-                                                                          last_hidden=hidden)
-        ic_list.append((item, ic))
-        if opt_list is not None and len(opt_list) > 0:
-            for i, itm in opt_list.iterrows():
-                result_back_test.loc[itm['index'], 'is_real'] = 1
-            print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, loss is {model_loss} \033[0m')
-            print(opt_list)
-            result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
-    plt.plot(pd.to_datetime(result_info.index), result_info.rtn.cumsum())
-    plt.show()
+    results = []
+    for days in range(2, 10, 1):
+        rnn_forecast = RnnForecast(train_days_size=30, period_days=7)
+        ic_list = []
+        result_info = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
+        for idx, item in enumerate(buy_date_list):
+            result_in = result[result.in_date <= item]
+            opt_list, ic, model_loss, rnn, hidden = rnn_forecast.get_buy_list(result_in, item, last_rnn=rnn,
+                                                                              last_hidden=hidden)
+            ic_list.append((item, ic))
+            if opt_list is not None and len(opt_list) > 0:
+                for i, itm in opt_list.iterrows():
+                    result_back_test.loc[itm['index'], 'is_real'] = 1
+                print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, loss is {model_loss} \033[0m')
+                print(opt_list)
+                result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
+        result_info['total_rtn'] = result_info.rtn.cumsum()
+        results.append(result_info)
+        plt.plot(pd.to_datetime(result_info.index), result_info.total_rtn)
+        plt.show()
