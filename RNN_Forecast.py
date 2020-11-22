@@ -136,6 +136,7 @@ class RnnForecast:
 
         return len(re) - start_index, len(re) - end_index
 
+
     def get_in_date_dataSet(self, re: pd.DataFrame, buy_date):
         if len(re[re.in_date == buy_date]) >= 5:
             test_start_index_l = re[re.in_date == buy_date].index[0]
@@ -144,7 +145,7 @@ class RnnForecast:
             test_start_index_l = re[re.in_date == buy_date].index[0] - pad_num
         test_end_index_l = re[re.in_date == buy_date].index[-1] + 1
 
-        train_start_index_l = re[re.in_date < (buy_date - np.timedelta64(self.train_date_periods, 'D'))].index[-1] + 1
+        train_start_index_l = re[re.in_date < (buy_date - np.timedelta64(self.train_date_periods, 'D'))].index[0] + 1
         train_end_index_l = re[re.in_date == buy_date].index[-1] + 1 if re[re.out_date < buy_date].index[-1] > \
                                                                         re[re.in_date == buy_date].index[-1] + 1 else \
             re[re.out_date < buy_date].index[-1]
