@@ -67,8 +67,8 @@ class RnnForecast:
         self.seed = 3
         self.EPOCH = 30
         self.LR = 0.001
-        self.period_days = 5
-        self.train_date_periods = 50
+        self.period_days = 4
+        self.train_date_periods = 30
         self.test_date_pad_len = 5
         self.batch_size = 8
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -136,6 +136,7 @@ class RnnForecast:
 
         return len(re) - start_index, len(re) - end_index
 
+
     def get_in_date_dataSet(self, re: pd.DataFrame, buy_date):
         if len(re[re.in_date == buy_date]) >= 5:
             test_start_index_l = re[re.in_date == buy_date].index[0]
@@ -144,7 +145,7 @@ class RnnForecast:
             test_start_index_l = re[re.in_date == buy_date].index[0] - pad_num
         test_end_index_l = re[re.in_date == buy_date].index[-1] + 1
 
-        train_start_index_l = re[re.in_date < (buy_date - np.timedelta64(self.train_date_periods, 'D'))].index[-1] + 1
+        train_start_index_l = re[re.in_date < (buy_date - np.timedelta64(self.train_date_periods, 'D'))].index[0] + 1
         train_end_index_l = re[re.in_date == buy_date].index[-1] + 1 if re[re.out_date < buy_date].index[-1] > \
                                                                         re[re.in_date == buy_date].index[-1] + 1 else \
             re[re.out_date < buy_date].index[-1]
@@ -215,7 +216,8 @@ class RnnForecast:
         with torch.no_grad():
             for data, data_len in test_loader_l:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
-                                                           data_len, batch_first=True, enforce_sorted=False)
+                                                           data_len, batch_first=True, enforce_sorted=False).\
+                    to(self.device)
                 test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(device_l), data_len)
                 output, _ = rnn_local(pack_data, h_state)
                 sorindex = []
@@ -223,19 +225,19 @@ class RnnForecast:
                 for idx, item in enumerate(data_len):
                     sum_idx += item
                     sorindex.append(sum_idx)
-                pre_indices = torch.tensor(sorindex)
-                pre_test_returns.append(torch.index_select(output, dim=0, index=pre_indices).detach())
+                pre_indices = torch.tensor(sorindex).to(self.device)
+                pre_test_returns.append(torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
                 test_returns.append(torch.index_select(test_y, dim=0, index=pre_indices).detach())
                 # loss = loss_func(torch.squeeze(output), torch.squeeze(pack_y.data))
                 # ic = util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(pack_y.data).detach().numpy())
 
             # print(pre_test_returns,test_returns)
-            final_ic = util.IC(torch.cat(pre_test_returns).squeeze().detach().numpy(),
-                               torch.cat(test_returns).squeeze().detach().numpy(), self.test_date_pad_len-1)
+            final_ic = util.IC(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy(),
+                               torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.test_date_pad_len-1)
             print(f'\033[1;31mpredict IC:{final_ic} \033[0m')
-            print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).squeeze().detach().numpy()}\033[0m')
-            print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).squeeze().detach().numpy()}\033[0m')
-            for idx, item in enumerate(torch.cat(pre_test_returns).squeeze().detach().numpy()):
+            print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            for idx, item in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
                 test_result.iloc[idx, 3] = item
             buy_num = int((len(test_result) / self.test_date_pad_len))
             test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
