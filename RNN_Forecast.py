@@ -247,13 +247,11 @@ class RnnForecast:
             for data, data_len, weights in train_loader_l:
                 # print(f'data[0] size is :{data[0].shape}')
                 if isinstance(data_len, list):
-                    data_len = Variable(torch.LongTensor(data_len).to(self.device))
-                pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32).to(Device),
-                                                           data_len, batch_first=True, enforce_sorted=False).to(
-                    self.device)
-                weights = rnn_utils.pack_padded_sequence(weights,
-                                                           data_len, batch_first=True, enforce_sorted=False).to(
-                    self.device)
+                    data_len = Variable(torch.LongTensor(data_len))
+                pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32)
+                                                           , data_len, batch_first=True, enforce_sorted=False).to(self.device)
+                weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
+                                                         enforce_sorted=False)
                 test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
 
                 output, h_state = rnn_local(pack_data, h_state)
@@ -336,7 +334,7 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
-    begin_date = '2020-01-20'
+    begin_date = '2019-11-20'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
