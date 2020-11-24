@@ -76,8 +76,8 @@ class RnnForecast:
 
     def __init__(self, train_days_size=90, period_days=9):
         self.seed = 3
-        self.EPOCH = 30
-        self.LR = 0.001
+        self.EPOCH = 100
+        self.LR = 0.0003
         self.period_days = period_days
         self.train_date_periods = train_days_size
         self.valid_size = 10
@@ -87,18 +87,14 @@ class RnnForecast:
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
         factors_list = forecast_strategy.factors_list
-        re = re.copy()
-        result_local = re.dropna()
-        result_local = result_local.sort_values(by=['in_date', 'out_date'])
-        result_local.reset_index(drop=True, inplace=True)
+        result_local = re.copy()
         buy_date_df = result_local.groupby('in_date').agg('count')
-
         """
         标准化
         """
         scaler = MinMaxScaler(feature_range=(0, 1))
         s_data = result_local[factors_list].copy()
-        for i, col in enumerate(factors_list):
+        for index, col in enumerate(factors_list):
             s_data[col] = scaler.fit_transform(s_data[col].values.reshape(-1, 1))
         s_data = pd.concat([result_local['in_date'], s_data], axis=1)
 
@@ -117,7 +113,7 @@ class RnnForecast:
                     random_state=seed)
             else:
                 X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list]
-            X_data.loc[i] = s_data.loc[i][factors_list].to_list()
+            X_data.loc[index] = s_data.loc[index][factors_list].to_list()
             X_data_np = X_data.to_numpy()
             X.append(torch.tensor(X_data_np).to(self.device))
             Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
@@ -169,6 +165,8 @@ class RnnForecast:
 
     @staticmethod
     def weighted_mse_loss(output, target, weights):
+        if len(output) != len(weights) :
+            raise RuntimeWarning('the size is not match')
         pct_var = (output - target) ** 2
         out = pct_var * weights.expand_as(target)
         loss = out.mean()
@@ -194,10 +192,12 @@ class RnnForecast:
 
     def get_buy_list(self, result_l, buy_date, last_rnn=None, last_hidden=None, use_valid=True):
         buy_date = pd.to_datetime(buy_date)
-        re = result_l.copy()
+        re = result_l.dropna().copy()
         re['out_date'] = pd.to_datetime(re['out_date'])
         re['pub_date'] = pd.to_datetime(re['pub_date'])
         re['in_date'] = pd.to_datetime(re['in_date'])
+        re = re.sort_values(by=['in_date', 'out_date'])
+        re.reset_index(drop=True, inplace=True)
         X_l, Y_l, result_run_l = self.prepare_data(re)
 
         train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result = \
@@ -211,18 +211,21 @@ class RnnForecast:
                 return None, None, None, last_rnn, last_hidden
             valid_X = X_l[valid_start_index: valid_end_index]
             valid_Y = Y_l[valid_start_index: valid_end_index]
-            valid_set = ForecastDataset(valid_X, valid_Y, result_run_l, re)
+            valid_re = result_run_l.loc[valid_start_index: valid_end_index].reset_index(drop=True)
+            valid_set = ForecastDataset(valid_X, valid_Y, valid_re, re)
             valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
                                        collate_fn=self.collate_fn)
 
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
+        train_re = result_run_l.loc[train_start_index_l: train_end_index_l].reset_index(drop=True)
 
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
+        test_re = result_run_l.loc[test_start_index_l: test_end_index_l].reset_index(drop=True)
 
-        train_set_l = ForecastDataset(train_X_l, train_Y_l, result_run_l, re)
-        test_set_l = ForecastDataset(test_X_l, test_Y_l, result_run_l, re)
+        train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
+        test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
 
         train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn,
                                     drop_last=True)
@@ -239,7 +242,7 @@ class RnnForecast:
         loss_l = None
         if len(train_loader_l) == 0:
             return None, None, None, last_rnn, last_hidden
-        early_stopping = EarlyStopping(patience=10, verbose=True)
+        early_stopping = EarlyStopping(patience=7, verbose=True)
         for stp in range(self.EPOCH):
             rnn_local.train()
             start_l = datetime.datetime.now()
@@ -288,22 +291,21 @@ class RnnForecast:
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
             print(f"epoch:{stp}, train_loss:{loss_l}, vaild_loss:{valid_loss} ,time:{time_cost}")
-            early_stopping(valid_loss, rnn, hidden)
+            early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
-        rnn.load_state_dict(torch.load('checkpoint.pt'))
+        rnn_local.load_state_dict(torch.load('checkpoint.pt'))
         h_state = torch.load('hidden.pt')
         pre_test_returns = []
         test_returns = []
         rnn_local.eval()
-
         with torch.no_grad():
             for data, data_len, weights in test_loader_l:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
                                                            data_len, batch_first=True, enforce_sorted=False). \
                     to(self.device)
-                test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
+                test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
                 output, _ = rnn_local(pack_data, h_state)
                 sor_index = []
                 sum_idx = -1
@@ -334,7 +336,7 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
-    begin_date = '2019-11-20'
+    begin_date = '2020-04-02'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
