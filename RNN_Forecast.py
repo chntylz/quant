@@ -369,5 +369,9 @@ if __name__ == '__main__':
                 result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
         result_info['total_rtn'] = result_info.rtn.cumsum()
         results.append(result_info)
+        plt.ylabel("Return")
+        plt.xlabel("Time")
+        plt.title(f'days={days}', fontsize=8)
         plt.plot(pd.to_datetime(result_info.index), result_info.total_rtn)
+        plt.setp(plt.gca().get_xticklabels(), rotation=50)
         plt.show()
