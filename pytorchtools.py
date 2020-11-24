@@ -20,6 +20,8 @@ class EarlyStopping:
             trace_func (function): trace print function.
                             Default: print
         """
+        self.best_model_dict = None
+        self.best_hidden = None
         self.patience = patience
         self.verbose = verbose
         self.counter = 0
@@ -53,6 +55,8 @@ class EarlyStopping:
         if self.verbose:
             self.trace_func(
                 f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), self.model_path)
-        torch.save(hidden, self.hidden_path)
+        self.best_model_dict = model.state_dict()
+        self.best_hidden = hidden
+        # torch.save(model.state_dict(), self.model_path)
+        # torch.save(hidden, self.hidden_path)
         self.val_loss_min = val_loss

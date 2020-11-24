@@ -1,14 +1,16 @@
 import datetime
 import logging
-import torch.nn.utils.rnn as rnn_utils
+
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.utils.rnn as rnn_utils
+from matplotlib import pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from torch import nn
 from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader
-from matplotlib import pyplot as plt
+
 import forecast_strategy
 from pytorchtools import EarlyStopping
 from util import util
@@ -148,7 +150,7 @@ class RnnForecast:
         if (train_end_index - train_start_index) / 3 < self.valid_size:
             return False, None, None, None, None
         return True, train_start_index, train_end_index - self.valid_size, \
-               train_end_index - self.valid_size + 1, train_end_index
+               train_end_index - self.valid_size, train_end_index
 
     @staticmethod
     def get_weight(re: pd.DataFrame, seq_start_index, seq_end_index, buy_day):
@@ -165,7 +167,7 @@ class RnnForecast:
 
     @staticmethod
     def weighted_mse_loss(output, target, weights):
-        if len(output) != len(weights) :
+        if len(output) != len(weights):
             raise RuntimeWarning('the size is not match')
         pct_var = (output - target) ** 2
         out = pct_var * weights.expand_as(target)
@@ -211,18 +213,18 @@ class RnnForecast:
                 return None, None, None, last_rnn, last_hidden
             valid_X = X_l[valid_start_index: valid_end_index]
             valid_Y = Y_l[valid_start_index: valid_end_index]
-            valid_re = result_run_l.loc[valid_start_index: valid_end_index].reset_index(drop=True)
+            valid_re = result_run_l.iloc[valid_start_index: valid_end_index].reset_index(drop=True)
             valid_set = ForecastDataset(valid_X, valid_Y, valid_re, re)
             valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
-                                       collate_fn=self.collate_fn)
+                                      collate_fn=self.collate_fn)
 
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
-        train_re = result_run_l.loc[train_start_index_l: train_end_index_l].reset_index(drop=True)
+        train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
 
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
-        test_re = result_run_l.loc[test_start_index_l: test_end_index_l].reset_index(drop=True)
+        test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
 
         train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
         test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
@@ -252,14 +254,16 @@ class RnnForecast:
                 if isinstance(data_len, list):
                     data_len = Variable(torch.LongTensor(data_len))
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32)
-                                                           , data_len, batch_first=True, enforce_sorted=False).to(self.device)
+                                                           , data_len, batch_first=True, enforce_sorted=False).to(
+                    self.device)
                 weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
                                                          enforce_sorted=False)
                 test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
 
                 output, h_state = rnn_local(pack_data, h_state)
                 h_state = h_state.detach()
-                loss_l = self.weighted_mse_loss(torch.squeeze(output), torch.squeeze(test_rtn), torch.squeeze(weights.data))
+                loss_l = self.weighted_mse_loss(torch.squeeze(output), torch.squeeze(test_rtn),
+                                                torch.squeeze(weights.data))
                 # loss_l = (torch.squeeze(output), torch.squeeze(test_rtn))
                 # util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(test_rtn).detach().numpy())
                 optimizer_local.zero_grad()  # clear gradients for this training step
@@ -268,25 +272,27 @@ class RnnForecast:
             rnn.eval()  # prep model for evaluation
             pre_valid_returns = []
             valid_returns = []
-            for data, data_len, weights in valid_loader:
-                # forward pass: compute predicted outputs by passing inputs to the model
-                pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
-                                                           data_len, batch_first=True, enforce_sorted=False). \
-                    to(self.device)
-                valid_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
-                output, _ = rnn_local(pack_data, h_state)
+            with torch.no_grad():
+                for data, data_len, weights in valid_loader:
+                    # forward pass: compute predicted outputs by passing inputs to the model
+                    pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
+                                                               data_len, batch_first=True, enforce_sorted=False). \
+                        to(self.device)
+                    valid_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
+                    output, _ = rnn_local(pack_data, h_state)
 
-                # record validation loss
-                sor_index = []
-                sum_idx = -1
-                for idx, item in enumerate(data_len):
-                    sum_idx += item
-                    sor_index.append(sum_idx)
-                pre_indices = torch.tensor(sor_index).to(self.device)
-                pre_valid_returns.append(torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
-                valid_returns.append(torch.index_select(valid_y, dim=0, index=pre_indices).detach())
-            valid_loss = loss(torch.cat(pre_valid_returns,dim=0).to(self.device),
-                              torch.cat(valid_returns, dim=0).to(self.device))
+                    # record validation loss
+                    sor_index = []
+                    sum_idx = -1
+                    for index, it in enumerate(data_len):
+                        sum_idx += it
+                        sor_index.append(sum_idx)
+                    pre_indices = torch.tensor(sor_index).to(self.device)
+                    pre_valid_returns.append(
+                        torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
+                    valid_returns.append(torch.index_select(valid_y, dim=0, index=pre_indices).detach())
+                valid_loss = loss(torch.cat(pre_valid_returns, dim=0).to(self.device),
+                                  torch.cat(valid_returns, dim=0).to(self.device))
 
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
@@ -294,9 +300,10 @@ class RnnForecast:
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
+                rnn_local.load_state_dict(early_stopping.best_model_dict)
+                h_state = early_stopping.best_hidden
                 break
-        rnn_local.load_state_dict(torch.load('checkpoint.pt'))
-        h_state = torch.load('hidden.pt')
+
         pre_test_returns = []
         test_returns = []
         rnn_local.eval()
@@ -309,23 +316,22 @@ class RnnForecast:
                 output, _ = rnn_local(pack_data, h_state)
                 sor_index = []
                 sum_idx = -1
-                for idx, item in enumerate(data_len):
-                    sum_idx += item
+                for index, it in enumerate(data_len):
+                    sum_idx += it
                     sor_index.append(sum_idx)
                 pre_indices = torch.tensor(sor_index).to(self.device)
                 pre_test_returns.append(torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
                 test_returns.append(torch.index_select(test_y, dim=0, index=pre_indices).detach())
-                # loss = loss_func(torch.squeeze(output), torch.squeeze(pack_y.data))
-                # ic = util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(pack_y.data).detach().numpy())
 
-            # print(pre_test_returns,test_returns)
             final_ic = util.IC(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy(),
                                torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.min_test_len - 1)
-            print(f'\033[1;31mpredict IC:{final_ic} \033[0m')
-            print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            for idx, item in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
-                test_result.iloc[idx, 3] = item
+            final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
+                              torch.cat(test_returns, dim=0).to(self.device)).detach()
+            print(f'\033[1;31mpredict IC:{final_ic},final_loss:{final_loss}\033[0m')
+            # print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            # print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            for index, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
+                test_result.iloc[index, 3] = it
             buy_num = int((len(test_result) / self.min_test_len))
             test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
             optimal_list = test_result[(test_result.is_today == True)]
