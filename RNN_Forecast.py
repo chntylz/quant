@@ -244,7 +244,7 @@ class RnnForecast:
         loss_l = None
         if len(train_loader_l) == 0:
             return None, None, None, last_rnn, last_hidden
-        early_stopping = EarlyStopping(patience=7, verbose=True)
+        early_stopping = EarlyStopping(patience=10, verbose=True)
         for stp in range(self.EPOCH):
             rnn_local.train()
             start_l = datetime.datetime.now()
@@ -300,10 +300,10 @@ class RnnForecast:
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
-                rnn_local.load_state_dict(early_stopping.best_model_dict)
-                h_state = early_stopping.best_hidden
-                break
 
+                break
+        rnn_local.load_state_dict(early_stopping.best_model_dict)
+        h_state = early_stopping.best_hidden
         pre_test_returns = []
         test_returns = []
         rnn_local.eval()
@@ -342,7 +342,7 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
-    begin_date = '2020-04-02'
+    begin_date = '2020-01-02'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
