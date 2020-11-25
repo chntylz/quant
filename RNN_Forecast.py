@@ -26,7 +26,7 @@ class GRUNet(nn.Module):
         self.rnn = nn.GRU(
             input_size=input_size,
             hidden_size=64,
-            num_layers=2,
+            num_layers=1,
             batch_first=True,
             bidirectional=False
         )
@@ -82,9 +82,10 @@ class RnnForecast:
         self.LR = 0.0003
         self.period_days = period_days
         self.train_date_periods = train_days_size
-        self.valid_size = 10
+
         self.min_test_len = 5
         self.batch_size = 8
+        self.valid_size = self.batch_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
@@ -192,6 +193,10 @@ class RnnForecast:
         test_result = test_result.loc[:, ['index', 'code', 'pure_rtn', 'predict_rtn', 'is_today']]
         return train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result
 
+    @staticmethod
+    def init_gru_state(batch_size, num_hiddens):
+        return (torch.zeros((batch_size, num_hiddens), device=Device),)
+
     def get_buy_list(self, result_l, buy_date, last_rnn=None, last_hidden=None, use_valid=True):
         buy_date = pd.to_datetime(buy_date)
         re = result_l.dropna().copy()
@@ -221,7 +226,7 @@ class RnnForecast:
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
         train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
-
+        torch.utils.data
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
         test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
@@ -241,12 +246,13 @@ class RnnForecast:
             rnn_local = GRUNet(len(forecast_strategy.factors_list)).to(self.device)
         optimizer_local = torch.optim.Adam(rnn_local.parameters(), lr=self.LR)  # optimize all cnn parameters
         loss = nn.MSELoss()
-        loss_l = None
+
         if len(train_loader_l) == 0:
             return None, None, None, last_rnn, last_hidden
         early_stopping = EarlyStopping(patience=10, verbose=True)
         for stp in range(self.EPOCH):
             rnn_local.train()
+            h_state = last_hidden
             start_l = datetime.datetime.now()
             loss_l = None
             for data, data_len, weights in train_loader_l:
@@ -258,16 +264,19 @@ class RnnForecast:
                     self.device)
                 weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
                                                          enforce_sorted=False)
-                test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
+                test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
 
                 output, h_state = rnn_local(pack_data, h_state)
                 h_state = h_state.detach()
-                loss_l = self.weighted_mse_loss(torch.squeeze(output), torch.squeeze(test_rtn),
-                                                torch.squeeze(weights.data))
-                # loss_l = (torch.squeeze(output), torch.squeeze(test_rtn))
+
+                # loss_l = self.weighted_mse_loss(torch.squeeze(output), torch.squeeze(test_rtn),
+                #                                 torch.squeeze(weights.data))
+                loss_l = loss(torch.squeeze(output), torch.squeeze(test_rtn))
+
                 # util.IC(torch.squeeze(output).detach().numpy(), torch.squeeze(test_rtn).detach().numpy())
                 optimizer_local.zero_grad()  # clear gradients for this training step
                 loss_l.backward()  # back propagation, compute gradients
+                nn.utils.clip_grad_norm_(rnn_local.parameters(), 0.5)
                 optimizer_local.step()
             rnn.eval()  # prep model for evaluation
             pre_valid_returns = []
@@ -296,11 +305,10 @@ class RnnForecast:
 
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
-            print(f"epoch:{stp}, train_loss:{loss_l}, vaild_loss:{valid_loss} ,time:{time_cost}")
+            print(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
-
                 break
         rnn_local.load_state_dict(early_stopping.best_model_dict)
         h_state = early_stopping.best_hidden
@@ -327,7 +335,7 @@ class RnnForecast:
                                torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.min_test_len - 1)
             final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
                               torch.cat(test_returns, dim=0).to(self.device)).detach()
-            print(f'\033[1;31mpredict IC:{final_ic},final_loss:{final_loss}\033[0m')
+            print(f'\033[1;31mpredict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
             # print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
             # print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
             for index, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
@@ -335,7 +343,7 @@ class RnnForecast:
             buy_num = int((len(test_result) / self.min_test_len))
             test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
             optimal_list = test_result[(test_result.is_today == True)]
-        return optimal_list, final_ic, loss_l.data, rnn_local, h_state
+        return optimal_list, final_ic, final_loss.data, rnn_local, h_state
 
 
 if __name__ == '__main__':

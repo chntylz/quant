@@ -56,7 +56,7 @@ class EarlyStopping:
             self.trace_func(
                 f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         self.best_model_dict = model.state_dict()
-        self.best_hidden = hidden
+        self.best_hidden = hidden.detach()
         # torch.save(model.state_dict(), self.model_path)
         # torch.save(hidden, self.hidden_path)
         self.val_loss_min = val_loss
