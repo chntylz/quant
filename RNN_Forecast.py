@@ -18,6 +18,10 @@ from util import util
 Device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.getLogger().setLevel(logging.INFO)
 
+# Mute sklearn warnings
+from warnings import simplefilter
+simplefilter(action='ignore', category=FutureWarning)
+simplefilter(action='ignore', category=DeprecationWarning)
 
 class GRUNet(nn.Module):
 
@@ -209,34 +213,43 @@ class RnnForecast:
 
         train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result = \
             self.get_in_date_dataSet(result_run_l, buy_date)
-        # logging.info(f'train size is {train_end_index_l - train_start_index_l}')
 
-        if use_valid:
-            size_validation, train_start_index_l, train_end_index_l, valid_start_index, valid_end_index = \
-                self.get_valid_index(train_start_index_l, train_end_index_l)
-            if not size_validation:
-                return None, None, None, last_rnn, last_hidden
-            valid_X = X_l[valid_start_index: valid_end_index]
-            valid_Y = Y_l[valid_start_index: valid_end_index]
-            valid_re = result_run_l.iloc[valid_start_index: valid_end_index].reset_index(drop=True)
-            valid_set = ForecastDataset(valid_X, valid_Y, valid_re, re)
-            valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
-                                      collate_fn=self.collate_fn)
+
+
+        # if use_valid:
+        #     size_validation, train_start_index_l, train_end_index_l, valid_start_index, valid_end_index = \
+        #         self.get_valid_index(train_start_index_l, train_end_index_l)
+        #     if not size_validation:
+        #         return None, None, None, last_rnn, last_hidden
+        #     valid_X = X_l[valid_start_index: valid_end_index]
+        #     valid_Y = Y_l[valid_start_index: valid_end_index]
+        #     valid_re = result_run_l.iloc[valid_start_index: valid_end_index].reset_index(drop=True)
+        #     valid_set = ForecastDataset(valid_X, valid_Y, valid_re, re)
+        #     valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
+        #                               collate_fn=self.collate_fn)
 
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
         train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
-        torch.utils.data
+
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
         test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
 
         train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
+
         test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
 
         train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn,
                                     drop_last=True)
         test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
+
+        if use_valid:
+            train_size = int(0.8 * len(train_set_l))
+            test_size = len(train_set_l) - train_size
+            train_set_l, valid_set = torch.utils.data.random_split(train_set_l, [train_size, test_size])
+            logging.info(f'valid_set size is {len(valid_set)}')
+            valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
 
         if last_rnn is not None and last_hidden is not None:
             h_state = last_hidden
@@ -358,7 +371,7 @@ if __name__ == '__main__':
     buy_date_list = result[result.in_date >= begin_date].groupby('in_date').agg('count').index.to_list()
 
     results = []
-    for days in range(9, 10, 1):
+    for days in range(14, 15, 1):
         rnn_forecast = RnnForecast(train_days_size=30, period_days=days)
         ic_list = []
         hidden = None
@@ -372,7 +385,7 @@ if __name__ == '__main__':
             if opt_list is not None and len(opt_list) > 0:
                 for i, itm in opt_list.iterrows():
                     result_back_test.loc[itm['index'], 'is_real'] = 1
-                print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, loss is {model_loss} \033[0m')
+                print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, final Loss is {model_loss} \033[0m')
                 print(opt_list)
                 result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
         result_info['total_rtn'] = result_info.rtn.cumsum()
