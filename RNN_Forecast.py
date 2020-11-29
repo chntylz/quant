@@ -1,5 +1,6 @@
 import datetime
 import logging
+from torch import multiprocessing
 
 import numpy as np
 import pandas as pd
@@ -20,8 +21,10 @@ logging.getLogger().setLevel(logging.INFO)
 
 # Mute sklearn warnings
 from warnings import simplefilter
+
 simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=DeprecationWarning)
+
 
 class GRUNet(nn.Module):
 
@@ -57,7 +60,7 @@ def extract_pad_sequence(o, lens):
 
 
 class ForecastDataset(Dataset):
-    def __init__(self, x, y, re_set, re_all):
+    def __init__(self, x, y, re_set=None, re_all=None):
         self.x = x
         self.y = y
         self.re_set = re_set
@@ -69,10 +72,12 @@ class ForecastDataset(Dataset):
     def __getitem__(self, index):
         curr_X = self.x[index]
         lens = len(curr_X)
-        seq_end_index = self.re_set.iloc[index]['index'] + 1
-        seq_start_index = seq_end_index - lens
-        buy_date = self.re_set.iloc[index].in_date
-        weights = RnnForecast.get_weight(self.re_all, seq_start_index, seq_end_index, buy_date)
+        weights = None
+        if self.re_set is not None:
+            seq_end_index = self.re_set.iloc[index]['index'] + 1
+            seq_start_index = seq_end_index - lens
+            buy_date = self.re_set.iloc[index].in_date
+            weights = RnnForecast.get_weight(self.re_all, seq_start_index, seq_end_index, buy_date)
         curr_Y = self.y[index]
         return curr_X, curr_Y, weights
 
@@ -80,8 +85,8 @@ class ForecastDataset(Dataset):
 class RnnForecast:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def __init__(self, train_days_size=90, period_days=9):
-        self.seed = 3
+    def __init__(self, train_days_size=90, period_days=9, seed=3):
+        self.seed = seed
         self.EPOCH = 100
         self.LR = 0.0003
         self.period_days = period_days
@@ -131,15 +136,16 @@ class RnnForecast:
     @staticmethod
     def collate_fn(batch):
         batch.sort(key=lambda x: len(x[0]), reverse=True)  # 新版本无需排序
-        weights = []
+        weights = None
         data = [it[0] for it in batch]
         target = [it[1] for it in batch]
-        weights = [it[2] for it in batch]
+
+        # weights = [it[2] for it in batch]
         # weights = [y for it in batch for y in it[2]]
         data_length = [len(sq) for sq in data]
         data = rnn_utils.pad_sequence(data, batch_first=True, padding_value=0)
         target = rnn_utils.pad_sequence(target, batch_first=True, padding_value=0)
-        weights = rnn_utils.pad_sequence(weights, batch_first=True, padding_value=0)
+        # weights = rnn_utils.pad_sequence(weights, batch_first=True, padding_value=0)
         return [data, target], data_length, weights
 
     @staticmethod
@@ -214,8 +220,6 @@ class RnnForecast:
         train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result = \
             self.get_in_date_dataSet(result_run_l, buy_date)
 
-
-
         # if use_valid:
         #     size_validation, train_start_index_l, train_end_index_l, valid_start_index, valid_end_index = \
         #         self.get_valid_index(train_start_index_l, train_end_index_l)
@@ -230,15 +234,17 @@ class RnnForecast:
 
         train_X_l = X_l[train_start_index_l: train_end_index_l]
         train_Y_l = Y_l[train_start_index_l: train_end_index_l]
-        train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
+        # train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
 
         test_X_l = X_l[test_start_index_l: test_end_index_l]
         test_Y_l = Y_l[test_start_index_l: test_end_index_l]
-        test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
+        # test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
 
-        train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
+        # train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
+        train_set_l = ForecastDataset(train_X_l, train_Y_l)
 
-        test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
+        # test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
+        test_set_l = ForecastDataset(test_X_l, test_Y_l)
 
         train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn,
                                     drop_last=True)
@@ -251,11 +257,9 @@ class RnnForecast:
             logging.info(f'valid_set size is {len(valid_set)}')
             valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
 
-        if last_rnn is not None and last_hidden is not None:
-            h_state = last_hidden
+        if last_rnn is not None:
             rnn_local = last_rnn
         else:
-            h_state = None
             rnn_local = GRUNet(len(forecast_strategy.factors_list)).to(self.device)
         optimizer_local = torch.optim.Adam(rnn_local.parameters(), lr=self.LR)  # optimize all cnn parameters
         loss = nn.MSELoss()
@@ -268,15 +272,15 @@ class RnnForecast:
             h_state = last_hidden
             start_l = datetime.datetime.now()
             loss_l = None
-            for data, data_len, weights in train_loader_l:
+            for index_train, (data, data_len, weights) in enumerate(train_loader_l):
                 # print(f'data[0] size is :{data[0].shape}')
                 if isinstance(data_len, list):
-                    data_len = Variable(torch.LongTensor(data_len))
+                    data_len = Variable(torch.LongTensor(data_len).to(self.device))
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32)
                                                            , data_len, batch_first=True, enforce_sorted=False).to(
                     self.device)
-                weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
-                                                         enforce_sorted=False)
+                # weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
+                #                                          enforce_sorted=False)
                 test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
 
                 output, h_state = rnn_local(pack_data, h_state)
@@ -291,16 +295,17 @@ class RnnForecast:
                 loss_l.backward()  # back propagation, compute gradients
                 nn.utils.clip_grad_norm_(rnn_local.parameters(), 0.5)
                 optimizer_local.step()
-            rnn.eval()  # prep model for evaluation
+            rnn_local.eval()  # prep model for evaluation
             pre_valid_returns = []
             valid_returns = []
             with torch.no_grad():
-                for data, data_len, weights in valid_loader:
+                for index_valid, (data, data_len, weights) in enumerate(valid_loader):
                     # forward pass: compute predicted outputs by passing inputs to the model
                     pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
                                                                data_len, batch_first=True, enforce_sorted=False). \
                         to(self.device)
-                    valid_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(Device), data_len)
+                    valid_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device),
+                                                   data_len)
                     output, _ = rnn_local(pack_data, h_state)
 
                     # record validation loss
@@ -318,7 +323,7 @@ class RnnForecast:
 
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
-            print(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
+            logging.info(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
@@ -333,6 +338,7 @@ class RnnForecast:
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
                                                            data_len, batch_first=True, enforce_sorted=False). \
                     to(self.device)
+
                 test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
                 output, _ = rnn_local(pack_data, h_state)
                 sor_index = []
@@ -359,6 +365,38 @@ class RnnForecast:
         return optimal_list, final_ic, final_loss.data, rnn_local, h_state
 
 
+def drow_plot(re_info, days_l):
+    plt.ylabel("Return")
+    plt.xlabel("Time")
+    plt.title(f'days={days_l}', fontsize=8)
+    plt.plot(pd.to_datetime(re_info.index), re_info.total_rtn)
+    plt.setp(plt.gca().get_xticklabels(), rotation=50)
+    plt.show()
+
+
+def rnn_run(result_l, result_back_test_l, buy_date_list_l, days_l, runs_l):
+    rnn_forecast = RnnForecast(train_days_size=30, period_days=days_l, seed=days_l * runs_l)
+    hidden = None
+    rnn = GRUNet(len(forecast_strategy.factors_list)).to(Device)
+    result_info_l = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
+    for idx, item in enumerate(buy_date_list_l):
+        result_in = result_l[result_l.in_date <= item]
+
+        opt_list, ic, model_loss, rnn, hidden = rnn_forecast.get_buy_list(result_in, item, last_rnn=rnn,
+                                                                          last_hidden=hidden)
+        if opt_list is not None and len(opt_list) > 0:
+            for i, itm in opt_list.iterrows():
+                result_back_test_l.loc[itm['index'], 'is_real'] = 1
+
+            print(
+                f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, final Loss is {model_loss} \033[0m')
+            print(opt_list)
+            result_info_l.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
+    result_info_l['total_rtn'] = result_info_l.rtn.cumsum()
+
+    return result_info_l, result_back_test_l
+
+
 if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
@@ -369,30 +407,17 @@ if __name__ == '__main__':
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
     result_back_test['pub_date'] = pd.to_datetime(result_back_test['pub_date'])
     buy_date_list = result[result.in_date >= begin_date].groupby('in_date').agg('count').index.to_list()
-
     results = []
-    for days in range(14, 15, 1):
-        rnn_forecast = RnnForecast(train_days_size=30, period_days=days)
-        ic_list = []
-        hidden = None
-        rnn = GRUNet(len(forecast_strategy.factors_list)).to(Device)
-        result_info = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
-        for idx, item in enumerate(buy_date_list):
-            result_in = result[result.in_date <= item]
-            opt_list, ic, model_loss, rnn, hidden = rnn_forecast.get_buy_list(result_in, item, last_rnn=rnn,
-                                                                              last_hidden=hidden)
-            ic_list.append((item, ic))
-            if opt_list is not None and len(opt_list) > 0:
-                for i, itm in opt_list.iterrows():
-                    result_back_test.loc[itm['index'], 'is_real'] = 1
-                print(f'\033[1;31m{item} rtn is :{opt_list.pure_rtn.mean()}, IC is {ic}, final Loss is {model_loss} \033[0m')
-                print(opt_list)
-                result_info.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
-        result_info['total_rtn'] = result_info.rtn.cumsum()
-        results.append(result_info)
-        plt.ylabel("Return")
-        plt.xlabel("Time")
-        plt.title(f'days={days}', fontsize=8)
-        plt.plot(pd.to_datetime(result_info.index), result_info.total_rtn)
-        plt.setp(plt.gca().get_xticklabels(), rotation=50)
-        plt.show()
+    result_back_test_list = []
+    result_infos = []
+    with multiprocessing.Pool(processes=4) as pool:
+
+        for days in range(14, 15, 1):
+            for runs in range(1, 5, 1):
+                return_tuple = pool.apply_async(func=rnn_run, args=(result, result_back_test, buy_date_list, days, runs))
+                results.append((days, return_tuple))
+        for index, (days_i, return_tuple_i) in enumerate(results):
+            result_info, result_back_test_l = return_tuple_i.get()
+            result_back_test_list.append(result_back_test_l)
+            result_infos.append(result_info)
+            drow_plot(result_info, days_i)
