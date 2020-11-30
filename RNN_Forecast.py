@@ -15,12 +15,12 @@ from torch.utils.data import Dataset, DataLoader
 import forecast_strategy
 from pytorchtools import EarlyStopping
 from util import util
-
+from warnings import simplefilter
 Device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logging.getLogger().setLevel(logging.INFO)
 
 # Mute sklearn warnings
-from warnings import simplefilter
+
 
 simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=DeprecationWarning)
@@ -54,8 +54,8 @@ class GRUNet(nn.Module):
 
 def extract_pad_sequence(o, lens):
     result_list = []
-    for index, d in enumerate(o):
-        result_list.append(d[0: lens[index]])
+    for idx_o, d in enumerate(o):
+        result_list.append(d[0: lens[idx_o]])
     return torch.cat(result_list, dim=0)
 
 
@@ -69,16 +69,16 @@ class ForecastDataset(Dataset):
     def __len__(self):
         return len(self.x)
 
-    def __getitem__(self, index):
-        curr_X = self.x[index]
+    def __getitem__(self, index_dataset):
+        curr_X = self.x[index_dataset]
         lens = len(curr_X)
         weights = None
         if self.re_set is not None:
-            seq_end_index = self.re_set.iloc[index]['index'] + 1
+            seq_end_index = self.re_set.iloc[index_dataset]['index'] + 1
             seq_start_index = seq_end_index - lens
-            buy_date = self.re_set.iloc[index].in_date
+            buy_date = self.re_set.iloc[index_dataset].in_date
             weights = RnnForecast.get_weight(self.re_all, seq_start_index, seq_end_index, buy_date)
-        curr_Y = self.y[index]
+        curr_Y = self.y[index_dataset]
         return curr_X, curr_Y, weights
 
 
@@ -106,7 +106,7 @@ class RnnForecast:
         """
         scaler = MinMaxScaler(feature_range=(0, 1))
         s_data = result_local[factors_list].copy()
-        for index, col in enumerate(factors_list):
+        for index_factor, col in enumerate(factors_list):
             s_data[col] = scaler.fit_transform(s_data[col].values.reshape(-1, 1))
         s_data = pd.concat([result_local['in_date'], s_data], axis=1)
 
@@ -115,7 +115,7 @@ class RnnForecast:
 
         X = []
         Y = []
-        for index, it in result_local[result_local.in_date > threshold].iterrows():
+        for index_re, it in result_local[result_local.in_date > threshold].iterrows():
             seed = np.random.seed(self.seed)
             begin_date_l = it.in_date
             end_date = it.in_date - datetime.timedelta(days=self.period_days)
@@ -125,7 +125,7 @@ class RnnForecast:
                     random_state=seed)
             else:
                 X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list]
-            X_data.loc[index] = s_data.loc[index][factors_list].to_list()
+            X_data.loc[index_re] = s_data.loc[index_re][factors_list].to_list()
             X_data_np = X_data.to_numpy()
             X.append(torch.tensor(X_data_np).to(self.device))
             Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
@@ -249,7 +249,7 @@ class RnnForecast:
         train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn,
                                     drop_last=True)
         test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
-
+        valid_loader = None
         if use_valid:
             train_size = int(0.8 * len(train_set_l))
             test_size = len(train_set_l) - train_size
@@ -266,7 +266,7 @@ class RnnForecast:
 
         if len(train_loader_l) == 0:
             return None, None, None, last_rnn, last_hidden
-        early_stopping = EarlyStopping(patience=10, verbose=True)
+        early_stopping = EarlyStopping(patience=20, verbose=True)
         for stp in range(self.EPOCH):
             rnn_local.train()
             h_state = last_hidden
@@ -275,7 +275,7 @@ class RnnForecast:
             for index_train, (data, data_len, weights) in enumerate(train_loader_l):
                 # print(f'data[0] size is :{data[0].shape}')
                 if isinstance(data_len, list):
-                    data_len = Variable(torch.LongTensor(data_len).to(self.device))
+                    data_len = Variable(torch.LongTensor(data_len))
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32)
                                                            , data_len, batch_first=True, enforce_sorted=False).to(
                     self.device)
@@ -311,7 +311,7 @@ class RnnForecast:
                     # record validation loss
                     sor_index = []
                     sum_idx = -1
-                    for index, it in enumerate(data_len):
+                    for index_rtn, it in enumerate(data_len):
                         sum_idx += it
                         sor_index.append(sum_idx)
                     pre_indices = torch.tensor(sor_index).to(self.device)
@@ -323,7 +323,7 @@ class RnnForecast:
 
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
-            logging.info(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
+            # logging.info(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
@@ -343,7 +343,7 @@ class RnnForecast:
                 output, _ = rnn_local(pack_data, h_state)
                 sor_index = []
                 sum_idx = -1
-                for index, it in enumerate(data_len):
+                for index_dt, it in enumerate(data_len):
                     sum_idx += it
                     sor_index.append(sum_idx)
                 pre_indices = torch.tensor(sor_index).to(self.device)
@@ -355,10 +355,10 @@ class RnnForecast:
             final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
                               torch.cat(test_returns, dim=0).to(self.device)).detach()
             print(f'\033[1;31mpredict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
-            # print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            # print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            for index, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
-                test_result.iloc[index, 3] = it
+            print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            for index_rtn, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
+                test_result.iloc[index_rtn, 3] = it
             buy_num = int((len(test_result) / self.min_test_len))
             test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
             optimal_list = test_result[(test_result.is_today == True)]
@@ -410,10 +410,9 @@ if __name__ == '__main__':
     results = []
     result_back_test_list = []
     result_infos = []
-    with multiprocessing.Pool(processes=4) as pool:
-
-        for days in range(14, 15, 1):
-            for runs in range(1, 5, 1):
+    with multiprocessing.Pool(processes=5) as pool:
+        for days in range(7, 15, 1):
+            for runs in range(0, 5, 1):
                 return_tuple = pool.apply_async(func=rnn_run, args=(result, result_back_test, buy_date_list, days, runs))
                 results.append((days, return_tuple))
         for index, (days_i, return_tuple_i) in enumerate(results):
