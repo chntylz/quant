@@ -16,7 +16,9 @@ import forecast_strategy
 from pytorchtools import EarlyStopping
 from util import util
 from warnings import simplefilter
+
 Device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Device = torch.device("cpu")
 logging.getLogger().setLevel(logging.INFO)
 
 # Mute sklearn warnings
@@ -95,7 +97,7 @@ class RnnForecast:
         self.min_test_len = 5
         self.batch_size = 8
         self.valid_size = self.batch_size
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = Device
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
         factors_list = forecast_strategy.factors_list
@@ -246,16 +248,18 @@ class RnnForecast:
         # test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
         test_set_l = ForecastDataset(test_X_l, test_Y_l)
 
-        train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn,
-                                    drop_last=True)
-        test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
+        train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False,
+                                    collate_fn=self.collate_fn, drop_last=True)
+        test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False,
+                                   collate_fn=self.collate_fn)
         valid_loader = None
         if use_valid:
             train_size = int(0.8 * len(train_set_l))
             test_size = len(train_set_l) - train_size
             train_set_l, valid_set = torch.utils.data.random_split(train_set_l, [train_size, test_size])
             logging.info(f'valid_set size is {len(valid_set)}')
-            valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False, collate_fn=self.collate_fn)
+            valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
+                                      collate_fn=self.collate_fn)
 
         if last_rnn is not None:
             rnn_local = last_rnn
@@ -410,9 +414,9 @@ if __name__ == '__main__':
     results = []
     result_back_test_list = []
     result_infos = []
-    with multiprocessing.Pool(processes=5) as pool:
-        for days in range(7, 15, 1):
-            for runs in range(0, 5, 1):
+    with multiprocessing.Pool(processes=2) as pool:
+        for days in range(21, 30, 1):
+            for runs in range(0, 10, 1):
                 return_tuple = pool.apply_async(func=rnn_run, args=(result, result_back_test, buy_date_list, days, runs))
                 results.append((days, return_tuple))
         for index, (days_i, return_tuple_i) in enumerate(results):
@@ -420,3 +424,9 @@ if __name__ == '__main__':
             result_back_test_list.append(result_back_test_l)
             result_infos.append(result_info)
             drow_plot(result_info, days_i)
+    # for days in range(17, 21, 1):
+    #     for runs in range(0, 10, 1):
+    #         result_info, result_back_test_l = rnn_run(result, result_back_test, buy_date_list, days, runs)
+    #         result_back_test_list.append(result_back_test_l)
+    #         result_infos.append(result_info)
+    #         drow_plot(result_info, days)
