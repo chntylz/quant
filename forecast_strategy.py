@@ -2051,18 +2051,18 @@ if __name__ == '__main__':
     residual = 0
     seed = np.random.seed()
     buy_signal_cache = BuySignalCache()
-    result_store = read_result('./data/result_store2.csv')
+    result_store = read_result('./data/result_store1.csv')
     sum_support = np.zeros(len(factors_list))
     sum_support_week = np.zeros(len(factors_list))
 
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201110'  ## 计算截止日
+    end_date = '20201202'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20201109'  ## 当日
-    tomorrow = '20201110'
+    trade_today = '20201201'  ## 当日
+    tomorrow = '20201202'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
@@ -2159,4 +2159,4 @@ if __name__ == '__main__':
         result.loc[index, 'intime'] = get_intime(row)
         result.loc[index, 'update_num'] = get_update_num(row)
         result.loc[index, 'origin'] = get_origin(row)
-    # draw_figure(net_date_value, total_net_date_value_b, result, total_net_date_value)
+

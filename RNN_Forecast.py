@@ -1,5 +1,8 @@
 import datetime
 import logging
+import os
+import pickle
+
 from torch import multiprocessing
 
 import numpy as np
@@ -19,11 +22,9 @@ from warnings import simplefilter
 
 Device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Device = torch.device("cpu")
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.WARN)
 
 # Mute sklearn warnings
-
-
 simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=DeprecationWarning)
 
@@ -87,7 +88,7 @@ class ForecastDataset(Dataset):
 class RnnForecast:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def __init__(self, train_days_size=90, period_days=9, seed=3):
+    def __init__(self, train_days_size=90, period_days=9, seed=3, data_map={}):
         self.seed = seed
         self.EPOCH = 100
         self.LR = 0.0003
@@ -98,10 +99,23 @@ class RnnForecast:
         self.batch_size = 8
         self.valid_size = self.batch_size
         self.device = Device
+        self.data_map = data_map
+        self.__data_map_changed__ = False
+
+    @staticmethod
+    def get_result_hash_key(re, periods):
+        first_in_date = re['in_date'].iloc[0].__hash__()
+        last_in_date = re['in_date'].iloc[-1].__hash__()
+        return first_in_date + last_in_date + len(re).__hash__() + periods
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
         factors_list = forecast_strategy.factors_list
-        result_local = re.copy()
+        result_local = re
+
+        data_key = self.get_result_hash_key(result_local, self.period_days)
+        if self.data_map.__contains__(data_key):
+            return self.data_map[data_key]
+
         buy_date_df = result_local.groupby('in_date').agg('count')
         """
         标准化
@@ -113,15 +127,15 @@ class RnnForecast:
         s_data = pd.concat([result_local['in_date'], s_data], axis=1)
 
         startdate = buy_date_df.index.values[0]
-        threshold = startdate + np.timedelta64(self.period_days, 'D')
+        threshold = startdate + np.timedelta64(self.period_days, 'D')  # 第一个序列的终止日期
 
         X = []
         Y = []
         for index_re, it in result_local[result_local.in_date > threshold].iterrows():
-            seed = np.random.seed(self.seed)
             begin_date_l = it.in_date
             end_date = it.in_date - datetime.timedelta(days=self.period_days)
             if is_sample:
+                seed = np.random.seed(self.seed)
                 X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list].sample(
                     frac=0.9,
                     random_state=seed)
@@ -132,8 +146,10 @@ class RnnForecast:
             X.append(torch.tensor(X_data_np).to(self.device))
             Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
             Y.append(torch.tensor(Y_data.to_numpy().reshape(-1, 1)).to(self.device))
-
-        return X, Y, result_local[result_local.in_date > threshold].reset_index()
+        self.data_map[data_key] = (X, Y, result_local[result_local.in_date > threshold].reset_index())
+        if not self.__data_map_changed__:
+            self.__data_map_changed__ = True
+        return self.data_map[data_key]
 
     @staticmethod
     def collate_fn(batch):
@@ -188,6 +204,7 @@ class RnnForecast:
         return loss
 
     def get_in_date_dataSet(self, re: pd.DataFrame, buy_date):
+        # TODO:: 增加缓存
         if len(re[re.in_date == buy_date]) >= 5:
             test_start_index_l = re[re.in_date == buy_date].index[0]
         else:
@@ -211,12 +228,8 @@ class RnnForecast:
 
     def get_buy_list(self, result_l, buy_date, last_rnn=None, last_hidden=None, use_valid=True):
         buy_date = pd.to_datetime(buy_date)
-        re = result_l.dropna().copy()
-        re['out_date'] = pd.to_datetime(re['out_date'])
-        re['pub_date'] = pd.to_datetime(re['pub_date'])
-        re['in_date'] = pd.to_datetime(re['in_date'])
-        re = re.sort_values(by=['in_date', 'out_date'])
-        re.reset_index(drop=True, inplace=True)
+        re = result_l
+
         X_l, Y_l, result_run_l = self.prepare_data(re)
 
         train_start_index_l, train_end_index_l, test_start_index_l, test_end_index_l, test_result = \
@@ -270,7 +283,7 @@ class RnnForecast:
 
         if len(train_loader_l) == 0:
             return None, None, None, last_rnn, last_hidden
-        early_stopping = EarlyStopping(patience=20, verbose=True)
+        early_stopping = EarlyStopping(patience=20, verbose=True, trace_func=logging.info)
         for stp in range(self.EPOCH):
             rnn_local.train()
             h_state = last_hidden
@@ -358,9 +371,10 @@ class RnnForecast:
                                torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.min_test_len - 1)
             final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
                               torch.cat(test_returns, dim=0).to(self.device)).detach()
-            print(f'\033[1;31mpredict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
-            print(f'\033[1;31m pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            print(f'\033[1;31m tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            print()
+            print(f'\033[1;31m{buy_date} predict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
+            print(f'\033[1;31m{buy_date} pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            print(f'\033[1;31m{buy_date} tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
             for index_rtn, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
                 test_result.iloc[index_rtn, 3] = it
             buy_num = int((len(test_result) / self.min_test_len))
@@ -369,7 +383,7 @@ class RnnForecast:
         return optimal_list, final_ic, final_loss.data, rnn_local, h_state
 
 
-def drow_plot(re_info, days_l):
+def draw_plot(re_info, days_l):
     plt.ylabel("Return")
     plt.xlabel("Time")
     plt.title(f'days={days_l}', fontsize=8)
@@ -379,7 +393,12 @@ def drow_plot(re_info, days_l):
 
 
 def rnn_run(result_l, result_back_test_l, buy_date_list_l, days_l, runs_l):
-    rnn_forecast = RnnForecast(train_days_size=30, period_days=days_l, seed=days_l * runs_l)
+    data_map = {}
+    data_path = './data_map.pkl'
+    if os.path.isfile(data_path):
+        with open(data_path, 'rb') as file:
+            data_map = pickle.load(file)
+    rnn_forecast = RnnForecast(train_days_size=30, period_days=days_l, seed=days_l * runs_l, data_map=data_map)
     hidden = None
     rnn = GRUNet(len(forecast_strategy.factors_list)).to(Device)
     result_info_l = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
@@ -397,7 +416,9 @@ def rnn_run(result_l, result_back_test_l, buy_date_list_l, days_l, runs_l):
             print(opt_list)
             result_info_l.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
     result_info_l['total_rtn'] = result_info_l.rtn.cumsum()
-
+    if rnn_forecast.__data_map_changed__:
+        with open(data_path, 'wb') as f:
+            pickle.dump(rnn_forecast.data_map, f)
     return result_info_l, result_back_test_l
 
 
@@ -405,6 +426,11 @@ if __name__ == '__main__':
     result = forecast_strategy.read_result('./data/result_store2.csv')
     result = result.dropna()
     result['is_real'] = 0
+    result['out_date'] = pd.to_datetime(result['out_date'])
+    result['pub_date'] = pd.to_datetime(result['pub_date'])
+    result['in_date'] = pd.to_datetime(result['in_date'])
+    result = result.sort_values(by=['in_date', 'out_date'])
+    result.reset_index(drop=True, inplace=True)
     begin_date = '2020-01-02'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
@@ -414,19 +440,21 @@ if __name__ == '__main__':
     results = []
     result_back_test_list = []
     result_infos = []
-    with multiprocessing.Pool(processes=2) as pool:
-        for days in range(21, 30, 1):
-            for runs in range(0, 10, 1):
-                return_tuple = pool.apply_async(func=rnn_run, args=(result, result_back_test, buy_date_list, days, runs))
-                results.append((days, return_tuple))
-        for index, (days_i, return_tuple_i) in enumerate(results):
-            result_info, result_back_test_l = return_tuple_i.get()
-            result_back_test_list.append(result_back_test_l)
-            result_infos.append(result_info)
-            drow_plot(result_info, days_i)
-    # for days in range(17, 21, 1):
-    #     for runs in range(0, 10, 1):
-    #         result_info, result_back_test_l = rnn_run(result, result_back_test, buy_date_list, days, runs)
+
+    # with multiprocessing.Pool(processes=2) as pool:
+    #     for days in range(21, 30, 1):
+    #         for runs in range(0, 10, 1):
+    #             return_tuple = pool.apply_async(func=rnn_run,
+    #                                             args=(result, result_back_test, buy_date_list, days, runs))
+    #             results.append((days, return_tuple))
+    #     for index, (days_i, return_tuple_i) in enumerate(results):
+    #         result_info, result_back_test_l = return_tuple_i.get()
     #         result_back_test_list.append(result_back_test_l)
     #         result_infos.append(result_info)
-    #         drow_plot(result_info, days)
+    #         drow_plot(result_info, days_i)
+    for days in range(17, 19, 1):
+        for runs in range(0, 1, 1):
+            result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
+            result_back_test_list.append(result_back_test_run)
+            result_infos.append(result_info)
+            draw_plot(result_info, days)

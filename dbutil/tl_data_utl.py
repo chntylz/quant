@@ -17,7 +17,7 @@ HTTP_AUTHORIZATION_ERROR = 401
 class Client:
     domain = 'api.wmcloud.com'
     port = 443
-    token = '1d1d269a2b1644dbfdb39aba7221f121335beb2730c395d920a409fc76e16f9f'
+    token = 'dcff9f4ba4383706f0e297aeea734d2e38898f84c965c14229145d8a07447c5d'
     # 设置因网络连接，重连的次数
     reconnectTimes = 2
     httpClient = None
