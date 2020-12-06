@@ -73,7 +73,7 @@ class ForecastDataset(Dataset):
         return len(self.x)
 
     def __getitem__(self, index_dataset):
-        curr_X = self.x[index_dataset]
+        curr_X = torch.tensor(self.x[index_dataset], dtype=torch.float32).to(Device)
         lens = len(curr_X)
         weights = None
         if self.re_set is not None:
@@ -81,7 +81,7 @@ class ForecastDataset(Dataset):
             seq_start_index = seq_end_index - lens
             buy_date = self.re_set.iloc[index_dataset].in_date
             weights = RnnForecast.get_weight(self.re_all, seq_start_index, seq_end_index, buy_date)
-        curr_Y = self.y[index_dataset]
+        curr_Y = torch.tensor(self.y[index_dataset], dtype=torch.float32).to(Device)
         return curr_X, curr_Y, weights
 
 
@@ -104,9 +104,9 @@ class RnnForecast:
 
     @staticmethod
     def get_result_hash_key(re, periods):
-        first_in_date = re['in_date'].iloc[0].__hash__()
-        last_in_date = re['in_date'].iloc[-1].__hash__()
-        return first_in_date + last_in_date + len(re).__hash__() + periods
+        first_in_date = re['in_date'].iloc[0].value
+        last_in_date = re['in_date'].iloc[-1].value
+        return first_in_date + last_in_date + len(re)*100 + periods
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
         factors_list = forecast_strategy.factors_list
@@ -143,9 +143,9 @@ class RnnForecast:
                 X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list]
             X_data.loc[index_re] = s_data.loc[index_re][factors_list].to_list()
             X_data_np = X_data.to_numpy()
-            X.append(torch.tensor(X_data_np).to(self.device))
+            X.append(X_data_np)
             Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
-            Y.append(torch.tensor(Y_data.to_numpy().reshape(-1, 1)).to(self.device))
+            Y.append(Y_data.to_numpy().reshape(-1, 1))
         self.data_map[data_key] = (X, Y, result_local[result_local.in_date > threshold].reset_index())
         if not self.__data_map_changed__:
             self.__data_map_changed__ = True
@@ -294,11 +294,10 @@ class RnnForecast:
                 if isinstance(data_len, list):
                     data_len = Variable(torch.LongTensor(data_len))
                 pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32)
-                                                           , data_len, batch_first=True, enforce_sorted=False).to(
-                    self.device)
+                                                           , data_len, batch_first=True, enforce_sorted=False)
                 # weights = rnn_utils.pack_padded_sequence(weights.to(self.device), data_len, batch_first=True,
                 #                                          enforce_sorted=False)
-                test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
+                test_rtn = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32), data_len)
 
                 output, h_state = rnn_local(pack_data, h_state)
                 h_state = h_state.detach()
@@ -417,7 +416,7 @@ def rnn_run(result_l, result_back_test_l, buy_date_list_l, days_l, runs_l):
             result_info_l.loc[item] = [opt_list.pure_rtn.mean(), ic[0], model_loss.item()]
     result_info_l['total_rtn'] = result_info_l.rtn.cumsum()
     if rnn_forecast.__data_map_changed__:
-        with open(data_path, 'wb') as f:
+        with open(data_path, 'wb') as f, torch.no_grad():
             pickle.dump(rnn_forecast.data_map, f)
     return result_info_l, result_back_test_l
 
@@ -441,20 +440,20 @@ if __name__ == '__main__':
     result_back_test_list = []
     result_infos = []
 
-    # with multiprocessing.Pool(processes=2) as pool:
-    #     for days in range(21, 30, 1):
-    #         for runs in range(0, 10, 1):
-    #             return_tuple = pool.apply_async(func=rnn_run,
-    #                                             args=(result, result_back_test, buy_date_list, days, runs))
-    #             results.append((days, return_tuple))
-    #     for index, (days_i, return_tuple_i) in enumerate(results):
-    #         result_info, result_back_test_l = return_tuple_i.get()
-    #         result_back_test_list.append(result_back_test_l)
-    #         result_infos.append(result_info)
-    #         drow_plot(result_info, days_i)
-    for days in range(17, 19, 1):
-        for runs in range(0, 1, 1):
-            result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
-            result_back_test_list.append(result_back_test_run)
+    with multiprocessing.Pool(processes=2) as pool:
+        for days in range(11, 12, 1):
+            for runs in range(0, 20, 1):
+                return_tuple = pool.apply_async(func=rnn_run,
+                                                args=(result, result_back_test, buy_date_list, days, runs))
+                results.append((days, return_tuple))
+        for index, (days_i, return_tuple_i) in enumerate(results):
+            result_info, result_back_test_l = return_tuple_i.get()
+            result_back_test_list.append(result_back_test_l)
             result_infos.append(result_info)
-            draw_plot(result_info, days)
+            draw_plot(result_info, days_i)
+    # for days in range(17, 18, 1):
+    #     for runs in range(0, 2, 1):
+    #         result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
+    #         result_back_test_list.append(result_back_test_run)
+    #         result_infos.append(result_info)
+    #         draw_plot(result_info, days)
