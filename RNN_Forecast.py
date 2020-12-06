@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import pickle
+import time
 
 from torch import multiprocessing
 
@@ -109,47 +110,48 @@ class RnnForecast:
         return first_in_date + last_in_date + len(re)*100 + periods
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
+        t = time.time()
         factors_list = forecast_strategy.factors_list
         result_local = re
 
         data_key = self.get_result_hash_key(result_local, self.period_days)
-        if self.data_map.__contains__(data_key):
-            return self.data_map[data_key]
+        if not self.data_map.__contains__(data_key):
+            buy_date_df = result_local.groupby('in_date').agg('count')
+            """
+            标准化
+            """
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            s_data = result_local[factors_list].copy()
+            for index_factor, col in enumerate(factors_list):
+                s_data[col] = scaler.fit_transform(s_data[col].values.reshape(-1, 1))
+            s_data = pd.concat([result_local['in_date'], s_data], axis=1)
 
-        buy_date_df = result_local.groupby('in_date').agg('count')
-        """
-        标准化
-        """
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        s_data = result_local[factors_list].copy()
-        for index_factor, col in enumerate(factors_list):
-            s_data[col] = scaler.fit_transform(s_data[col].values.reshape(-1, 1))
-        s_data = pd.concat([result_local['in_date'], s_data], axis=1)
+            startdate = buy_date_df.index.values[0]
+            threshold = startdate + np.timedelta64(self.period_days, 'D')  # 第一个序列的终止日期
 
-        startdate = buy_date_df.index.values[0]
-        threshold = startdate + np.timedelta64(self.period_days, 'D')  # 第一个序列的终止日期
+            X = []
+            Y = []
+            for index_re, it in result_local[result_local.in_date > threshold].iterrows():
+                begin_date_l = it.in_date
+                end_date = it.in_date - datetime.timedelta(days=self.period_days)
+                if is_sample:
+                    seed = np.random.seed(self.seed)
+                    X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list].sample(
+                        frac=0.9,
+                        random_state=seed)
+                else:
+                    X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list]
+                X_data.loc[index_re] = s_data.loc[index_re][factors_list].to_list()
+                X_data_np = X_data.to_numpy()
+                X.append(X_data_np)
+                Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
+                Y.append(Y_data.to_numpy().reshape(-1, 1))
+            self.data_map[data_key] = (X, Y, threshold)
+            if not self.__data_map_changed__:
+                self.__data_map_changed__ = True
 
-        X = []
-        Y = []
-        for index_re, it in result_local[result_local.in_date > threshold].iterrows():
-            begin_date_l = it.in_date
-            end_date = it.in_date - datetime.timedelta(days=self.period_days)
-            if is_sample:
-                seed = np.random.seed(self.seed)
-                X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list].sample(
-                    frac=0.9,
-                    random_state=seed)
-            else:
-                X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list]
-            X_data.loc[index_re] = s_data.loc[index_re][factors_list].to_list()
-            X_data_np = X_data.to_numpy()
-            X.append(X_data_np)
-            Y_data = result_local[result_local.index.isin(X_data.index.to_list())].pure_rtn.copy()
-            Y.append(Y_data.to_numpy().reshape(-1, 1))
-        self.data_map[data_key] = (X, Y, result_local[result_local.in_date > threshold].reset_index())
-        if not self.__data_map_changed__:
-            self.__data_map_changed__ = True
-        return self.data_map[data_key]
+        return self.data_map[data_key][0], self.data_map[data_key][1], \
+               result_local[result_local.in_date > self.data_map[data_key][2]].reset_index()
 
     @staticmethod
     def collate_fn(batch):
@@ -440,20 +442,20 @@ if __name__ == '__main__':
     result_back_test_list = []
     result_infos = []
 
-    with multiprocessing.Pool(processes=2) as pool:
-        for days in range(11, 12, 1):
-            for runs in range(0, 20, 1):
-                return_tuple = pool.apply_async(func=rnn_run,
-                                                args=(result, result_back_test, buy_date_list, days, runs))
-                results.append((days, return_tuple))
-        for index, (days_i, return_tuple_i) in enumerate(results):
-            result_info, result_back_test_l = return_tuple_i.get()
-            result_back_test_list.append(result_back_test_l)
-            result_infos.append(result_info)
-            draw_plot(result_info, days_i)
-    # for days in range(17, 18, 1):
-    #     for runs in range(0, 2, 1):
-    #         result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
-    #         result_back_test_list.append(result_back_test_run)
+    # with multiprocessing.Pool(processes=2) as pool:
+    #     for days in range(11, 12, 1):
+    #         for runs in range(0, 20, 1):
+    #             return_tuple = pool.apply_async(func=rnn_run,
+    #                                             args=(result, result_back_test, buy_date_list, days, runs))
+    #             results.append((days, return_tuple))
+    #     for index, (days_i, return_tuple_i) in enumerate(results):
+    #         result_info, result_back_test_l = return_tuple_i.get()
+    #         result_back_test_list.append(result_back_test_l)
     #         result_infos.append(result_info)
-    #         draw_plot(result_info, days)
+    #         draw_plot(result_info, days_i)
+    for days in range(17, 18, 1):
+        for runs in range(0, 2, 1):
+            result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
+            result_back_test_list.append(result_back_test_run)
+            result_infos.append(result_info)
+            draw_plot(result_info, days)
