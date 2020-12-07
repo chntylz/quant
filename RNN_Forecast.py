@@ -395,7 +395,8 @@ def draw_plot(re_info, days_l):
 
 def rnn_run(result_l, result_back_test_l, buy_date_list_l, days_l, runs_l):
     data_map = {}
-    data_path = './data_map.pkl'
+
+    data_path = f'./data_map{days_l}.pkl'
     if os.path.isfile(data_path):
         with open(data_path, 'rb') as file:
             data_map = pickle.load(file)
@@ -442,17 +443,17 @@ if __name__ == '__main__':
     result_back_test_list = []
     result_infos = []
 
-    with multiprocessing.Pool(processes=3) as pool:
-        for days in range(11, 12, 1):
-            for runs in range(0, 20, 1):
-                return_tuple = pool.apply_async(func=rnn_run,
-                                                args=(result, result_back_test, buy_date_list, days, runs))
-                results.append((days, return_tuple))
-        for index, (days_i, return_tuple_i) in enumerate(results):
-            result_info, result_back_test_l = return_tuple_i.get()
-            result_back_test_list.append(result_back_test_l)
-            result_infos.append(result_info)
-            draw_plot(result_info, days_i)
+    # with multiprocessing.Pool(processes=3) as pool:
+    #     for days in range(11, 12, 1):
+    #         for runs in range(0, 20, 1):
+    #             return_tuple = pool.apply_async(func=rnn_run,
+    #                                             args=(result, result_back_test, buy_date_list, days, runs))
+    #             results.append((days, return_tuple))
+    #     for index, (days_i, return_tuple_i) in enumerate(results):
+    #         result_info, result_back_test_l = return_tuple_i.get()
+    #         result_back_test_list.append(result_back_test_l)
+    #         result_infos.append(result_info)
+    #         draw_plot(result_info, days_i)
     for days in range(17, 18, 1):
         for runs in range(0, 2, 1):
             result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
