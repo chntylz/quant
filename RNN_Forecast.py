@@ -442,17 +442,17 @@ if __name__ == '__main__':
     result_back_test_list = []
     result_infos = []
 
-    # with multiprocessing.Pool(processes=2) as pool:
-    #     for days in range(11, 12, 1):
-    #         for runs in range(0, 20, 1):
-    #             return_tuple = pool.apply_async(func=rnn_run,
-    #                                             args=(result, result_back_test, buy_date_list, days, runs))
-    #             results.append((days, return_tuple))
-    #     for index, (days_i, return_tuple_i) in enumerate(results):
-    #         result_info, result_back_test_l = return_tuple_i.get()
-    #         result_back_test_list.append(result_back_test_l)
-    #         result_infos.append(result_info)
-    #         draw_plot(result_info, days_i)
+    with multiprocessing.Pool(processes=3) as pool:
+        for days in range(11, 12, 1):
+            for runs in range(0, 20, 1):
+                return_tuple = pool.apply_async(func=rnn_run,
+                                                args=(result, result_back_test, buy_date_list, days, runs))
+                results.append((days, return_tuple))
+        for index, (days_i, return_tuple_i) in enumerate(results):
+            result_info, result_back_test_l = return_tuple_i.get()
+            result_back_test_list.append(result_back_test_l)
+            result_infos.append(result_info)
+            draw_plot(result_info, days_i)
     for days in range(17, 18, 1):
         for runs in range(0, 2, 1):
             result_info, result_back_test_run = rnn_run(result, result_back_test, buy_date_list, days, runs)
