@@ -21,6 +21,8 @@ from pytorchtools import EarlyStopping
 from util import util
 from warnings import simplefilter
 
+TEST_PERCENT = 0.8
+
 Device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Device = torch.device("cpu")
 logging.getLogger().setLevel(logging.WARN)
@@ -107,7 +109,7 @@ class RnnForecast:
     def get_result_hash_key(re, periods):
         first_in_date = re['in_date'].iloc[0].value
         last_in_date = re['in_date'].iloc[-1].value
-        return first_in_date + last_in_date + len(re)*100 + periods
+        return first_in_date + last_in_date + len(re) * 100 + periods
 
     def prepare_data(self, re: pd.DataFrame, is_sample=False):
         t = time.time()
@@ -136,7 +138,8 @@ class RnnForecast:
                 end_date = it.in_date - datetime.timedelta(days=self.period_days)
                 if is_sample:
                     seed = np.random.seed(self.seed)
-                    X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][factors_list].sample(
+                    X_data = s_data[(s_data.in_date >= end_date) & (s_data.in_date < begin_date_l)][
+                        factors_list].sample(
                         frac=0.9,
                         random_state=seed)
                 else:
@@ -249,49 +252,94 @@ class RnnForecast:
         #     valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
         #                               collate_fn=self.collate_fn)
 
-        train_X_l = X_l[train_start_index_l: train_end_index_l]
-        train_Y_l = Y_l[train_start_index_l: train_end_index_l]
+        train_X = X_l[train_start_index_l: train_end_index_l]
+        train_Y = Y_l[train_start_index_l: train_end_index_l]
         # train_re = result_run_l.iloc[train_start_index_l: train_end_index_l].reset_index(drop=True)
 
-        test_X_l = X_l[test_start_index_l: test_end_index_l]
-        test_Y_l = Y_l[test_start_index_l: test_end_index_l]
+        test_X = X_l[test_start_index_l: test_end_index_l]
+        test_Y = Y_l[test_start_index_l: test_end_index_l]
         # test_re = result_run_l.iloc[test_start_index_l: test_end_index_l].reset_index(drop=True)
 
-        # train_set_l = ForecastDataset(train_X_l, train_Y_l, train_re, re)
-        train_set_l = ForecastDataset(train_X_l, train_Y_l)
+        # train_set = ForecastDataset(train_X, train_Y, train_re, re)
+        train_set = ForecastDataset(train_X, train_Y)
 
-        # test_set_l = ForecastDataset(test_X_l, test_Y_l, test_re, re)
-        test_set_l = ForecastDataset(test_X_l, test_Y_l)
+        # test_set = ForecastDataset(test_X, test_Y, test_re, re)
+        test_set = ForecastDataset(test_X, test_Y)
 
-        train_loader_l = DataLoader(train_set_l, batch_size=self.batch_size, shuffle=False,
-                                    collate_fn=self.collate_fn, drop_last=True)
-        test_loader_l = DataLoader(test_set_l, batch_size=self.batch_size, shuffle=False,
-                                   collate_fn=self.collate_fn)
+        train_loader = DataLoader(train_set, batch_size=self.batch_size, shuffle=False,
+                                  collate_fn=self.collate_fn, drop_last=True)
+        test_loader = DataLoader(test_set, batch_size=self.batch_size, shuffle=False,
+                                 collate_fn=self.collate_fn)
         valid_loader = None
         if use_valid:
-            train_size = int(0.8 * len(train_set_l))
-            test_size = len(train_set_l) - train_size
-            train_set_l, valid_set = torch.utils.data.random_split(train_set_l, [train_size, test_size])
+            train_size = int(TEST_PERCENT * len(train_set))
+            test_size = len(train_set) - train_size
+            train_set, valid_set = torch.utils.data.random_split(train_set, [train_size, test_size])
             logging.info(f'valid_set size is {len(valid_set)}')
             valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
                                       collate_fn=self.collate_fn)
+        if len(train_loader) == 0:
+            return None, None, None, last_rnn, last_hidden
 
+        early_stopping, h_state, loss, rnn_local = self.train_model(last_hidden, last_rnn, train_loader, valid_loader)
+        final_ic, final_loss, optimal_list = self.generate_buy_list(buy_date, early_stopping, h_state, loss, rnn_local,
+                                                                    test_loader, test_result)
+        return optimal_list, final_ic, final_loss.data, rnn_local, h_state
+
+    def train_model(self, last_hidden, last_rnn, train_loader, valid_loader):
         if last_rnn is not None:
             rnn_local = last_rnn
         else:
             rnn_local = GRUNet(len(forecast_strategy.factors_list)).to(self.device)
         optimizer_local = torch.optim.Adam(rnn_local.parameters(), lr=self.LR)  # optimize all cnn parameters
-        loss = nn.MSELoss()
-
-        if len(train_loader_l) == 0:
-            return None, None, None, last_rnn, last_hidden
+        loss = nn.MSELoss().to(self.device)
         early_stopping = EarlyStopping(patience=20, verbose=True, trace_func=logging.info)
+        rnn_local, h_state = self.train_rnn(early_stopping, last_hidden, loss, optimizer_local, rnn_local, train_loader,
+                                            valid_loader)
+        return early_stopping, h_state, loss, rnn_local
+
+    def generate_buy_list(self, buy_date, early_stopping, h_state, loss, rnn_local, test_loader, test_result):
+        pre_test_returns = []
+        test_returns = []
+        rnn_local.eval()
+        with torch.no_grad():
+            for data, data_len, weights in test_loader:
+                pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
+                                                           data_len, batch_first=True, enforce_sorted=False). \
+                    to(self.device)
+
+                test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
+                output, _ = rnn_local(pack_data, h_state)
+                sor_index = []
+                sum_idx = -1
+                for index_dt, it in enumerate(data_len):
+                    sum_idx += it
+                    sor_index.append(sum_idx)
+                pre_indices = torch.tensor(sor_index).to(self.device)
+                pre_test_returns.append(torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
+                test_returns.append(torch.index_select(test_y, dim=0, index=pre_indices).detach())
+
+            final_ic = util.IC(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy(),
+                               torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.min_test_len - 1)
+            final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
+                              torch.cat(test_returns, dim=0).to(self.device)).detach()
+            print(f'\033[1;31m{buy_date} predict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
+            print(f'\033[1;31m{buy_date} pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            print(f'\033[1;31m{buy_date} tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
+            for index_rtn, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
+                test_result.iloc[index_rtn, 3] = it
+            buy_num = int((len(test_result) / self.min_test_len))
+            test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
+            optimal_list = test_result[(test_result.is_today == True)]
+        return final_ic, final_loss, optimal_list
+
+    def train_rnn(self, early_stopping, last_hidden, loss, optimizer_local, rnn_local, train_loader, valid_loader):
         for stp in range(self.EPOCH):
             rnn_local.train()
             h_state = last_hidden
             start_l = datetime.datetime.now()
             loss_l = None
-            for index_train, (data, data_len, weights) in enumerate(train_loader_l):
+            for index_train, (data, data_len, weights) in enumerate(train_loader):
                 # print(f'data[0] size is :{data[0].shape}')
                 if isinstance(data_len, list):
                     data_len = Variable(torch.LongTensor(data_len))
@@ -341,47 +389,14 @@ class RnnForecast:
 
             end_l = datetime.datetime.now()
             time_cost = (end_l - start_l).seconds
-            # logging.info(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
+            logging.info(f"epoch:{stp}, train_loss:{loss_l}, valid_loss:{valid_loss} ,time:{time_cost}")
             early_stopping(valid_loss, rnn_local, h_state)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
         rnn_local.load_state_dict(early_stopping.best_model_dict)
         h_state = early_stopping.best_hidden
-        pre_test_returns = []
-        test_returns = []
-        rnn_local.eval()
-        with torch.no_grad():
-            for data, data_len, weights in test_loader_l:
-                pack_data = rnn_utils.pack_padded_sequence(torch.as_tensor(data[0], dtype=torch.float32),
-                                                           data_len, batch_first=True, enforce_sorted=False). \
-                    to(self.device)
-
-                test_y = extract_pad_sequence(torch.as_tensor(data[1], dtype=torch.float32).to(self.device), data_len)
-                output, _ = rnn_local(pack_data, h_state)
-                sor_index = []
-                sum_idx = -1
-                for index_dt, it in enumerate(data_len):
-                    sum_idx += it
-                    sor_index.append(sum_idx)
-                pre_indices = torch.tensor(sor_index).to(self.device)
-                pre_test_returns.append(torch.index_select(output.to(self.device), dim=0, index=pre_indices).detach())
-                test_returns.append(torch.index_select(test_y, dim=0, index=pre_indices).detach())
-
-            final_ic = util.IC(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy(),
-                               torch.cat(test_returns).cpu().squeeze().detach().numpy(), self.min_test_len - 1)
-            final_loss = loss(torch.cat(pre_test_returns, dim=0).to(self.device),
-                              torch.cat(test_returns, dim=0).to(self.device)).detach()
-            print()
-            print(f'\033[1;31m{buy_date} predict IC:{final_ic}, val_loss:{early_stopping.val_loss_min}\033[0m')
-            print(f'\033[1;31m{buy_date} pre_rtn:{torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            print(f'\033[1;31m{buy_date} tst_rtn:{torch.cat(test_returns).cpu().squeeze().detach().numpy()}\033[0m')
-            for index_rtn, it in enumerate(torch.cat(pre_test_returns).cpu().squeeze().detach().numpy()):
-                test_result.iloc[index_rtn, 3] = it
-            buy_num = int((len(test_result) / self.min_test_len))
-            test_result = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
-            optimal_list = test_result[(test_result.is_today == True)]
-        return optimal_list, final_ic, final_loss.data, rnn_local, h_state
+        return rnn_local, h_state
 
 
 def draw_plot(re_info, days_l):
@@ -433,7 +448,7 @@ if __name__ == '__main__':
     result['in_date'] = pd.to_datetime(result['in_date'])
     result = result.sort_values(by=['in_date', 'out_date'])
     result.reset_index(drop=True, inplace=True)
-    begin_date = '2020-01-02'
+    begin_date = '2020-06-18'
     result_back_test = result[result.in_date >= begin_date].copy()
     result_back_test['in_date'] = pd.to_datetime(result_back_test['in_date'])
     result_back_test['out_date'] = pd.to_datetime(result_back_test['out_date'])
