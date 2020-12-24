@@ -373,7 +373,7 @@ class RnnForecast:
             test_result1 = test_result.sort_values(by='predict_rtn', ascending=False).iloc[0:buy_num, :]
 
             optimal_list = test_result1[(test_result1.is_today == True)]
-        return final_ic, final_loss, test_result1, optimal_list,
+        return final_ic, final_loss, test_result, optimal_list,
 
     def train_rnn(self, early_stopping, last_hidden, loss, optimizer_local, rnn_local, train_loader, valid_loader):
         for stp in range(self.EPOCH):
@@ -478,10 +478,10 @@ def select_final_buy_list(rnn_list, return_info_list, test_lists, choose_ratio):
             final_rtn = test_lists[index].loc[:, ['code', 'predict_rtn']].copy()
         else:
             final_rtn = final_rtn.append(test_lists[index].loc[:, ['code', 'predict_rtn']].copy())
-    buy_list = final_rtn['code', 'predict_rtn'].groupby('code').agg('sum').sort_valuse(by=['predict_rtn'],
+    buy_list = final_rtn[['code', 'predict_rtn']].groupby('code').agg('sum').sort_values(by=['predict_rtn'],
                                                                                        ascending=False)
     buy_num = int(len(buy_list) / choose_ratio)
-    rtn_buy_list = pd.merge(buy_list.iloc[:buy_num, :], test_lists[0]['code', 'pure_rtn', 'is_today'], on='code')
+    rtn_buy_list = pd.merge(buy_list.iloc[:buy_num, :], test_lists[0][['code', 'pure_rtn', 'is_today']], on='code')
 
     return rtn_buy_list
 
