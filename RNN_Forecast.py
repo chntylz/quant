@@ -266,6 +266,8 @@ class RnnForecast:
         predict_result = self.build_predict_result(buy_date, factor_today, result_l)
 
     def get_buy_list(self, result_l, buy_date, last_rnn=None, last_hidden=None, use_valid=True, is_predict=False):
+        last_rnn.to(self.device)
+        last_hidden.to(self.device)
         buy_date = pd.to_datetime(buy_date)
         re = result_l
 
@@ -319,7 +321,7 @@ class RnnForecast:
         final_ic, final_loss, test_result, optimal_list = self.generate_buy_list(buy_date, early_stopping, h_state,
                                                                                  loss, rnn_local,
                                                                                  test_loader, test_result, is_predict)
-        return optimal_list, final_ic, final_loss.data, rnn_local, h_state, test_result
+        return optimal_list, final_ic, final_loss.data, rnn_local.to('cpu'), h_state.to('cpu'), test_result
 
     def train_model(self, last_hidden, last_rnn, train_loader, valid_loader):
         if last_rnn is not None:
@@ -495,7 +497,7 @@ def rnn_ensemble(result_l, result_back_test_l, buy_date_list_l, days_l, runs=20)
             data_map = pickle.load(file)
 
     choose_ratio = 5
-    rnn = GRUNet(len(forecast_strategy.factors_list)).to(Device)
+    rnn = GRUNet(len(forecast_strategy.factors_list))
 
     result_info_l = pd.DataFrame(columns=['rtn', 'ic', 'loss'])
     rnn_list = [rnn for i in range(RUN_ROUND)]
