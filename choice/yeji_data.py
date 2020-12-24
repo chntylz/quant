@@ -1,8 +1,9 @@
 import logging
 
-from choice.EmQuantAPI import *
-from dbutil.db2df import *
 import numpy as np
+from choice.EmQuantAPI import *
+
+from dbutil.db2df import *
 
 # from forecast_strategy import read_yeji
 logging.getLogger().setLevel(logging.INFO)
@@ -447,7 +448,7 @@ all_ts_codes = \
 
 
 def get_money_flow(ts_codes, start_date, end_date):
-    stock_info = pd.read_csv('../data/calender.csv',converters={'cal_date': str})
+    stock_info = pd.read_csv('../data/calender.csv', converters={'cal_date': str})
     stock_info = stock_info[(stock_info.is_open == 1) & (stock_info.cal_date >= start_date.replace('-', '', 2))
                             & (stock_info.cal_date <= end_date.replace('-', '', 2))]
     for index, item in stock_info.iterrows():
@@ -456,8 +457,8 @@ def get_money_flow(ts_codes, start_date, end_date):
         # 沪深股票 (日)主力资金净流入率 (日)主力净流入资金 主力净流入量 ddx
         # data = c.csd(ts_codes, "INFLOWRATE ,NETINFLOW,NETINVOLUME,DDX", trade_date, trade_date,
         #              "N=-5,period=1,adjustflag=1,curtype=1,order=1,market=CNSESZ,Ispandas=1")
-        data = c.css(ts_codes, "INFLOWRATE,NETINFLOW,NETBUYVOL,DDX", "TradeDate="+trade_date+",N=-5,Ispandas=1")
-        data.rename(columns={'NETBUYVOL': 'NETINVOLUME'},inplace=True)
+        data = c.css(ts_codes, "INFLOWRATE,NETINFLOW,NETBUYVOL,DDX", "TradeDate=" + trade_date + ",N=-5,Ispandas=1")
+        data.rename(columns={'NETBUYVOL': 'NETINVOLUME'}, inplace=True)
         data['DATES'] = trade_date
         init_choice_money_flow(data)
 
@@ -505,13 +506,16 @@ def generate_report_date_array(start_date, end_date):
 
 def compare_choice_db(from_date='2020-06-01', end_date='2020-12-31', compare_date='2020-09-19'):
     reports_array = generate_report_date_array(from_date, end_date)
-    append_data = pd.DataFrame( columns=['CODES', 'DATES', 'PROFITNOTICECHGPCTL', 'PROFITNOTICECHGPCTT', 'PROFITNOTICESTYLE', 'PROFITNOTICEDATE', 'REPORT_DATE'])
+    append_data = pd.DataFrame(
+        columns=['CODES', 'DATES', 'PROFITNOTICECHGPCTL', 'PROFITNOTICECHGPCTT', 'PROFITNOTICESTYLE',
+                 'PROFITNOTICEDATE', 'REPORT_DATE'])
     append_data.set_index('CODES', inplace=True)
     for i, reports_date in enumerate(reports_array):
         sql = f"SELECT * FROM quant.choice_forecast where report_date = '{reports_date}' and PROFITNOTICEDATE <= '{compare_date}'"
         datas_db = get_choice_forecast(sql)
         data_choice = get_forecast_data(all_ts_codes, reports_date)
-        data_choice.PROFITNOTICEDATE = pd.to_datetime(data_choice.PROFITNOTICEDATE).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data_choice.PROFITNOTICEDATE = pd.to_datetime(data_choice.PROFITNOTICEDATE).apply(
+            lambda x: x.strftime('%Y-%m-%d'))
         data_choice = data_choice[data_choice.PROFITNOTICEDATE <= compare_date]
 
         for index, item in data_choice.iterrows():
@@ -549,7 +553,8 @@ def save_st(start_date=None, end_date=None):
         result = result.append(data_df)
         result = result.append(data_df1)
         print(f'finish:{start_date}')
-        start_date = (datetime.datetime.strptime(start_date,'%Y-%m-%d') + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        start_date = (datetime.datetime.strptime(start_date, '%Y-%m-%d') + datetime.timedelta(days=1)).strftime(
+            '%Y-%m-%d')
 
     result.to_csv('../data/st_stock.csv', index=False, mode='a', header=False)
 
@@ -560,8 +565,8 @@ if __name__ == '__main__':
     lost_data = compare_choice_db(compare_date=tomorrow)
 
     today = datetime.datetime.now().strftime('%Y-%m-%d')
+    # today = datetime.date(2020, 12, 17).strftime('%Y-%m-%d')
     get_money_flow(all_ts_codes, today, today)
-
     save_st(today, today)
 
     # report_array = generate_report_date_array('2020-08-31', '2020-12-31')

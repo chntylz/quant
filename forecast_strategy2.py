@@ -23,6 +23,7 @@ from util import util
 
 # logging.getLogger().setLevel(logging.INFO)
 
+
 def trade_date_cac(base_date, days, calendar, *args):
     """
     返回基于base_date在股市calender中寻找首个交易日作为买入日和ndays交易日之后的卖出日
@@ -959,8 +960,7 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         #                            np.nan, np.nan]
         result_trade.loc[count] = [rtn, pure_rtn, zz500_rtn, net_rtn, buy_date, sell_date, buy_ts_info[1],
                                    buy_ts_info[0], 0, per_ts_pos, is_real, forecasttype, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-                                   np.nan, np.nan]
+                                   np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
     return result_trade
 
 
@@ -1155,8 +1155,8 @@ def save_datas():
 """
 factors_list = ['size', 'turnover_raten', 'turnover_rate1', 'pct_changen', 'pct_change',
                 'pe_ttm', 'volume_ratio', 'from_list_date', 'turnover_raten_std', 'pct_changen_std', 'gap_days',
-                'profit_score', 'related_score', 'ddx', 'beta0']
-
+                'profit_score']
+extend_factor_list = []
 
 
 def get_factors(result_in):
@@ -1355,8 +1355,8 @@ def extract_factors(ts_code, start, end, ndate):
     #                volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
     #                related_score, s_type, intime, origin]
     factor_list = [size, turnover_rate5, turnover_rate1, pct_change5, pct_change, pe_ttm,
-                   volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score,
-                   related_score, ddx, beta0]
+                   volume_ratio, from_list_date, turnover_rate5_std, pct_change5_std, gap_days, profit_score
+                   ]
 
     return factor_list
 
@@ -1657,32 +1657,17 @@ def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
                                                                              '%Y-%m-%d')).days
     if length_days >= IC_range + IC_step * IC_times:
         # print(f'calc_factor-ic_range:{IC_range}')
-        IC_df, pca, scaler = calc_factors(history_data, IC_times, IC_range, IC_step, use_extend_factor=True)
+        IC_df, pca, scaler = calc_factors(history_data, IC_times, IC_range, IC_step)
     else:
-        IC_df, pca, scaler = calc_factors(history_data, use_extend_factor=True)
+        IC_df, pca, scaler = calc_factors(history_data)
 
     return select_factor(IC_df), pca, scaler
 
 
-def get_extend_factor(result_pca):
-    df = None
-    for idx, item in result_pca.iterrows():
-        _, factor_date, _ = trade_date_cac(item.pub_date, -1, calender)
-        extend_factor_df = db2df.get_extend_factor(item.code, factor_date)
-        extend_factor_df.iloc[:, 2:]
-        extend_factor_df['idx'] = idx
-        if df is None:
-            df = extend_factor_df
-        else:
-            df = df.append(extend_factor_df)
-
-    result_extend = pd.merge(result_pca, df, right_on='idx', left_index=True,)
-    return df.columns.iloc[:,1:].to_list(), result_extend
-
-
-def calc_factors(result_factor, times=None, period=40, step=5, use_extend_factor=False):
+def calc_factors(result_factor, times=None, period=40, step=5):
     IC_factors = ['pure_rtn']
     IC_factors.extend(factors_list)
+    IC_factors.append('count')
     IC_df = pd.DataFrame(columns=IC_factors)
 
     start_date2 = result_factor['out_date'].iloc[-1]
@@ -1696,12 +1681,7 @@ def calc_factors(result_factor, times=None, period=40, step=5, use_extend_factor
     result_pca = result_factor[
         (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
                 result_factor['pub_date'] > tran_dateformat(begin_date))].copy()
-    if use_extend_factor:
-        extend_factor_list, result_extend = get_extend_factor(result_pca)
-        IC_factors.extend(extend_factor_list)
-    IC_factors.append('count')
-
-    result_pca = result_pca.dropna(subset=IC_factors)
+    result_pca = result_pca.dropna(subset=factors_list)
     std_features, scaler = util.standard(result_pca[IC_factors[1:-1]].to_numpy(), scaler=None,
                                          y=result_pca[0:1].to_numpy())
     # try:
@@ -1941,7 +1921,7 @@ def save_param(result_local):
     result_save.to_csv('./data/result_store2.csv', index=False, header=0, mode='a')
 
 
-def trade_test(yeji_l, positions, ratio_i1, range_j1, residual_k1, step_l1, times_l1=0, *args, **kwargs) -> tuple:
+def trade_test(yeji_l, positions, ratio_i1, range_j1, residual_k1, step_l1, times_l1=0,*args, **kwargs) -> tuple:
     global ratio, range_ic, residual, step, times
     logging.info(f'start ')
     init_param()
@@ -2015,7 +1995,7 @@ def describe_result(result_l, positions_dataframe_l, ratio_local, range_local, r
     print('最大回撤:', max_draw_down)
     print('Sharpe率:', sharpe_ratio(net_date_value - 1))
     print(f'SQN Score:{sqn_score}')
-    # draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
+
 
     return net_date_value, total_net_date_value_b, total_net_date_value, total_rtn, average_positions, max_draw_down, \
            sharp, ratio_local, range_local, residual_local
@@ -2077,14 +2057,14 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190908'  ## 计算起始日
-    end_date = '20201218'  ## 计算截止日
+    end_date = '20201223'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20201217'  ## 当日
-    tomorrow = '20201218'
+    trade_today = '20201222'  ## 当日
+    tomorrow = '20201223'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
+    yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', True)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
