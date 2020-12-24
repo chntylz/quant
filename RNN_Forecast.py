@@ -316,7 +316,7 @@ class RnnForecast:
             valid_loader = DataLoader(valid_set, batch_size=self.batch_size, shuffle=False,
                                       collate_fn=self.collate_fn)
         if len(train_loader) == 0:
-            return None, None, None, last_rnn, last_hidden, test_result
+            return None, None, None, last_rnn.to('cpu'), last_hidden.to('cpu'), test_result
 
         early_stopping, h_state, loss, rnn_local = self.train_model(last_hidden, last_rnn, train_loader, valid_loader)
         final_ic, final_loss, test_result, optimal_list = self.generate_buy_list(buy_date, early_stopping, h_state,
