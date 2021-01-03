@@ -3,8 +3,8 @@ __author__ = 'weijie'
 
 """
 *   EmQuantAPI for python
-*   version  2.4.2.0
-*   c++ version 2.4.2.0
+*   version  2.5.1.0
+*   c++ version 2.5.1.0
 *   Copyright(c)2016-2020,  EastMoney Information  Co,. Ltd. All Rights Reserved. 
 """
 
@@ -496,7 +496,6 @@ class c:
         cls.__InitSucceed = True
         cls.__apiDllPath = UtilAccess.GetLibraryPath()
         cls.__quantLib = CDLL(cls.__apiDllPath)
-        # cls.__quantLib = CDLL('/Users/apple/PycharmProjects/QuantD1/choice/libs/mac/libEMQuantAPIx64.dylib')
         cls.__AsynDataFunc = cls.Type_AsynDataFunc(cls.__HandleAsynData)
 
         quantLib = cls.__quantLib
@@ -524,6 +523,10 @@ class c:
         quant_css = quantLib.css
         quant_css.restype = c_int
         quant_css.argtypes = [c_char_p, c_char_p, c_char_p, c_void_p]
+
+        quant_cses = quantLib.cses
+        quant_cses.restype = c_int
+        quant_cses.argtypes = [c_char_p, c_char_p, c_char_p, c_void_p]
 
         quant_tradedates = quantLib.tradedates
         quant_tradedates.restype = c_int
@@ -653,6 +656,7 @@ class c:
         cls.__QuantFuncDict["geterrstring"] = quant_geterrstring
         cls.__QuantFuncDict["csd"]          = quant_csd
         cls.__QuantFuncDict["css"]          = quant_css
+        cls.__QuantFuncDict["cses"]         = quant_cses
         cls.__QuantFuncDict["tradedates"]   = quant_tradedates
         cls.__QuantFuncDict["sector"]       = quant_sector
         cls.__QuantFuncDict["getdate"]      = quant_getdate
@@ -817,6 +821,38 @@ class c:
         eqData = stEQData()
         refEqData = byref(pointer(eqData))
         coutResult = cls.__Exec("css", codes, indicators, options, refEqData)
+        if coutResult != 0:
+            data.ErrorCode = coutResult
+            data.ErrorMsg = cls.geterrstring(data.ErrorCode)
+            return data
+        tempData = refEqData._obj.contents
+        if not isinstance(tempData, stEQData):
+            data.ErrorCode = coutResult
+            data.ErrorMsg = cls.geterrstring(data.ErrorCode)
+        else:
+            data.resolve25RankData(tempData)
+            cls.__Exec("releasedata", pointer(tempData))
+        return cls.__tryResolvePandas(data, result[1])
+
+    @classmethod
+    def cses(cls, blockcodes, indicators, options="", *arga, **argb):
+        """
+        板块截面数据查询(同步请求)
+        :param blockcodes:板块代码  多个代码间用半角逗号隔开。
+        :param indicators:板块指标 多个指标间用半角逗号隔开，支持大小写。
+        :param options:附加参数  多个参数以半角逗号隔开。
+        :return:EmQuantData
+        """
+        blockcodes = cls.__toString(blockcodes)
+        indicators = cls.__toString(indicators)
+        result = cls.__PandasOptionFilter(options)
+        options = result[0]
+        ShowBlank = cls.__ShowBlankOption(options)
+
+        data = cls.EmQuantData(ShowBlank)
+        eqData = stEQData()
+        refEqData = byref(pointer(eqData))
+        coutResult = cls.__Exec("cses", blockcodes, indicators, options, refEqData)
         if coutResult != 0:
             data.ErrorCode = coutResult
             data.ErrorMsg = cls.geterrstring(data.ErrorCode)
@@ -1716,7 +1752,7 @@ class c:
                     code_list.append(code)
                 for cIndex in range(0, len(data.Data[code])):
                     data_list[cIndex].extend(data.Data[code][cIndex])
-        elif(fun_name == "css" or fun_name == "csqsnapshot"):
+        elif(fun_name == "css" or fun_name == "cses" or fun_name == "csqsnapshot"):
             for code_index in range(0, len(data.Codes)):
                 code = data.Codes[code_index]
                 date_list.extend(data.Dates)

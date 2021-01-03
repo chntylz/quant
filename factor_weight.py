@@ -110,7 +110,15 @@ def get_weight(IC_all, factor_list, date, IC_length, period, weight_way, halflif
 
 
 def get_weight_simple(IC_all, factor_list, IC_length, period, weight_way, halflife=0):
-
+    """
+    :param IC_all: ic df ，ic index is date，columns is factors name
+    :param factor_list: ic columns list
+    :param IC_length: 测算ic所需的日期
+    :param period: 前一期的时长（持股时间）
+    :param weight_way: 计算权重的方式
+    :param halflife: 是否使用半衰期
+    :return: 返回的权重 pd.series
+    """
     IC_use_all = IC_all.loc[:, factor_list].iloc[-IC_length - period:-period] if period != 0 else \
         IC_all.loc[:, factor_list].iloc[-IC_length - period:]
     IC_use = copy.deepcopy(IC_use_all.apply(func=pd.to_numeric, axis=1))
@@ -264,11 +272,11 @@ def get_factor_combine(startdate, enddate, Factor_path, factor_list, is_valid, c
     if type(enddate) == str:
         enddate = pd.Timestamp(enddate)
 
-    re = close_adj.pct_change(5).loc['20130104':enddate]
+    re = close_adj.pct_change(5).loc['20130104':enddate]  # 持有周期5日
     Factor_dict = {}
     for f in factor_list:
         Factor_dict[f] = (pd.read_pickle(Factor_path + f)).loc['20130104':enddate]
-    columns_ = is_valid.columns
+    columns_ = is_valid.columns  # 代码
     index_ = is_valid.loc[startdate:enddate].index
     factor_combine = pd.DataFrame(0., index=index_, columns=columns_)
 

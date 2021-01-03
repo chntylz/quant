@@ -33,8 +33,7 @@ def installEmQuantAPI():
         pthFile.close()
         print("Success:", "EmQuantAPI installed.")
     else:
-        print("Error: EmQuantApi install fail!(in get pth)")
-
+        print( "Error: EmQuantApi install fail!(in get pth)")
 
 if __name__ == "__main__":
     installEmQuantAPI()

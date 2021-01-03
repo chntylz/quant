@@ -59,6 +59,16 @@ def standard(x, scaler=None, y=None):
     # x_std = x_df.rank().to_numpy()
         return x_std, scaler
 
+def get_fh_price(curr_price, target_avg_price, curr_avg_price,curr_stock):
+    """
+    计算达到目标成本价y，需要用当前价（x）买入多少金额的股票
+    :param curr_price: 当前市场价
+    :param target_avg_price: 目标成本价
+    :param curr_avg_price:当前成本价
+    :param curr_stock:当前持仓手数
+    :return: 金额
+    """
+    return curr_price*100*(curr_avg_price-target_avg_price)*curr_stock/(target_avg_price-curr_price)
 
 def fit_standard(x):
     scaler = StandardScaler()

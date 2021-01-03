@@ -564,10 +564,10 @@ if __name__ == '__main__':
     tomorrow = (datetime.datetime.now().date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     lost_data = compare_choice_db(compare_date=tomorrow)
 
-    today = datetime.datetime.now().strftime('%Y-%m-%d')
-    # today = datetime.date(2020, 12, 17).strftime('%Y-%m-%d')
-    get_money_flow(all_ts_codes, today, today)
-    save_st(today, today)
+    # today = datetime.datetime.now().strftime('%Y-%m-%d')
+    # # today = datetime.date(2020, 12, 17).strftime('%Y-%m-%d')
+    # get_money_flow(all_ts_codes, today, today)
+    # save_st(today, today)
 
     # report_array = generate_report_date_array('2020-08-31', '2020-12-31')
     # logging.info(report_array)

@@ -6,19 +6,49 @@ from sqlalchemy import create_engine
 
 from util import tunshare
 
-engine = create_engine('mysql+pymysql://root:myh123@localhost:3306/quant?charset=utf8',pool_recycle=1)
+engine = create_engine('mysql+pymysql://root:myh123@localhost:3306/quant?charset=utf8', pool_recycle=1)
 pro = tunshare.get_pro()
+
+
+def get_stock_forecast_updatedate():
+    global engine
+    sql = "select act_pubtime from  quant.stock_forecast order by act_pubtime desc limit 1"
+    return pd.read_sql(sql, engine).act_pubtime.values[0]
+
+
+def get_stock_forecast_data(begin_date, end_date):
+    global engine
+    sql = f"select * from  quant.stock_forecast as a where a.publish_date between '{begin_date}' and '{end_date}' " \
+          f"order by act_pubtime"
+    return pd.read_sql(sql, engine)
 
 
 def get_k_data(ts_code, start, end) -> pd.DataFrame:
     global engine
     sql = "SELECT * FROM quant.stock_daily where ts_code ='" + ts_code + "' and trade_date between '" + start + "' and '" + end + "'"
+    df = pd.read_sql(sql, engine)
+    df['trade_date'] = df['trade_date'].apply(func=str)
+    return df
+
+
+def get_extend_factors_name() -> list:
+    global engine
+    sql = "show columns from quant.stock_factor"
+    df = pd.read_sql(sql, engine)
+    return df.Field.iloc[2:].to_list()
+
+
+def get_extend_factor(ts_code, tradedate):
+    global engine
+    sql = "SELECT * FROM quant.stock_factor where ts_code ='" + ts_code + "' and trade_date = '" + tradedate + "'"
     return pd.read_sql(sql, engine)
 
-def get_k_data_period( start, end):
+
+def get_k_data_period(start, end):
     global engine
     sql = "SELECT * FROM quant.stock_daily where trade_date between '" + start + "' and '" + end + "' order by trade_date"
     return pd.read_sql(sql, engine)
+
 
 def get_basic(ts_code, start, end):
     sql = "SELECT ts_code,trade_date,close,turnover_rate_f,volume_ratio,pe_ttm,circ_mv FROM quant.stock_basic where  ts_code ='" + ts_code + "' and trade_date between '" + start + "' and '" + end + "'"
@@ -51,11 +81,14 @@ def get_suspend_df(ts_code, trade_date):
         '-', '', 3) + "' and suspend_type = 'S'"
     return pd.read_sql(sql, engine)
 
+
 def init_tl_forecast(data):
     data.to_sql(name='tl_forecast', con=engine, if_exists='append', index=False)
 
+
 def init_choice_money_flow(data):
     data.to_sql(name='choice_money_flow', con=engine, if_exists='append', index=True)
+
 
 def update_suspend_d(from_date=None, end_date=None):
     from_date_S = from_date
@@ -111,7 +144,7 @@ def update_basic(from_date=None, end_date=None):
         print(len(df_current))
 
 
-def get_money_flow(ts_code,date):
+def get_money_flow(ts_code, date):
     sql = f'select ddx from quant.choice_money_flow where CODES="{ts_code}" and DATES="{pd.to_datetime(date)}" limit 1'
     return pd.read_sql(sql, engine)
 
@@ -148,6 +181,7 @@ def get_forecast_to_yeji(from_date, end_date):
     yj_data = yeji_forecast_db2df(yj_data)
     return yj_data
 
+
 def get_choice_forecast_to_yeji(from_date, end_date):
     sql = "select * from quant.choice_forecast where (PROFITNOTICEDATE between '" + from_date + "' and '" + end_date + "') and PROFITNOTICESTYLE in ('略增','预增','扭亏') order by PROFITNOTICEDATE"
     yj_data = pd.read_sql(sql, engine)
@@ -155,12 +189,14 @@ def get_choice_forecast_to_yeji(from_date, end_date):
     yj_data['intime'] = 2
     return yj_data
 
+
 def get_choice_forecast_to_yeji_all(from_date, end_date):
     sql = "select * from quant.choice_forecast where (PROFITNOTICEDATE between '" + from_date + "' and '" + end_date + "')  order by PROFITNOTICEDATE"
     yj_data = pd.read_sql(sql, engine)
     yj_data = choice_forecast_2yeji(yj_data)
     yj_data['intime'] = 2
     return yj_data
+
 
 def get_forecast_all(from_date, end_date):
     sql = "select end_date,ann_date,ts_code,type,p_change_min, p_change_max from quant.stock_forecast where (end_date between '" + from_date + "' and '" + end_date + "') and ann_date>'20151231' order by ann_date"
@@ -197,9 +233,11 @@ def yeji_forecast_db2df(yj_data):
     yj_data = yj_data[order]
     return yj_data
 
+
 def choice_forecast_2yeji(choice_data):
     data = choice_data.rename(
-        columns={'REPORT_DATE': 'date', 'CODES': 'instrument', 'PROFITNOTICEDATE': 'ndate', 'PROFITNOTICESTYLE': 'forecasttype',
+        columns={'REPORT_DATE': 'date', 'CODES': 'instrument', 'PROFITNOTICEDATE': 'ndate',
+                 'PROFITNOTICESTYLE': 'forecasttype',
                  'PROFITNOTICECHGPCTL': 'increasel', 'PROFITNOTICECHGPCTT': 'increaset'})
     data.loc[:, 'zfpx'] = (data.loc[:, 'increasel'] + data.loc[:, 'increaset']) / 2
     data['hymc'] = ''
@@ -207,12 +245,13 @@ def choice_forecast_2yeji(choice_data):
     data['forecast'] = 'increase'
     order = ['date', 'ndate', 'instrument', 'hymc', 'forecast', 'forecasttype',
              'increasel', 'increaset', 'zfpx']
+
     def function(x):
         def tran_dateformat(base_date):
             if str(base_date).__contains__('-'):
                 date_str = base_date
             elif str(base_date).__contains__('/'):
-                date_str = str(base_date).replace('/','-',2)
+                date_str = str(base_date).replace('/', '-', 2)
             else:
                 date = datetime.datetime.strptime(base_date, '%Y%m%d')
                 date_str = date.strftime('%Y-%m-%d').__str__()
@@ -225,6 +264,7 @@ def choice_forecast_2yeji(choice_data):
     data = data[order]
     data['s_type'] = data['date'].apply(lambda x: get_choice_stype(x))
     return data
+
 
 def get_choice_stype(x: str):
     if x.endswith('-03-31'):
@@ -293,9 +333,11 @@ def compare_forecast(from_date=None):
         if len(ts_dataframe) != len(db_dataframe):
             diff_dataframe.loc[from_date_str] = [len(ts_dataframe), len(db_dataframe)]
 
+
 ## TODO::
 def get_choice_forecast(sql):
-    return pd.read_sql(sql,con=engine)
+    return pd.read_sql(sql, con=engine)
+
 
 def get_netprofit_yoy(ts_code, report_date):
     sql = "SELECT netprofit_yoy FROM quant.stock_fina_indicator where ts_code = '" + ts_code + "' and end_date = '" + report_date + "'"
