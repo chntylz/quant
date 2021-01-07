@@ -158,7 +158,6 @@ dict_2db = {'secID': 'sec_id',
             'NIncomeChgrUPL': 'nincome_chgr_upl',
             'expnIncomeLL': 'expn_income_ll',
             'expnIncomeUPL': 'expn_income_upl',
-            'x_doctor': 'x_doctor',
             'dc_record_id': 'dc_record_id',
             'ts_code': 'ts_code'}
 
@@ -191,7 +190,6 @@ dict_2df = {'sec_id': 'secID',
             'nincome_chgr_upl': 'NIncomeChgrUPL',
             'expn_income_ll': 'expnIncomeLL',
             'expn_income_upl': 'expnIncomeUPL',
-            'x_doctor': 'x_doctor',
             'dc_record_id': 'dc_record_id',
             'ts_code': 'ts_code'}
 
@@ -215,7 +213,7 @@ def update_data(begin_date='20201229', end_date=None):
     else:
         print(code)
         print(result)
-    pd_data['x_doctor'] = '0'
+    # pd_data['x_doctor'] = '0'
     pd_data['dc_record_id'] = 1
     latest_time = db2df.get_stock_forecast_updatedate()
     pd_data = pd_data[pd_data.actPubtime > latest_time]

@@ -39,7 +39,6 @@ class EventBtEngine(metaclass=MetaEventEngine):
         :param start_date: 回测起始日期
         :param end_date: 回测结束日期
         :param event_dataframe: 历史事件列表（pandas.Dataframe)
-        :param factor_dataframe: 历史事件配套的因子列表（pandas.Dataframe)
         :param event_type: 事件类型
         :param trade_strategy: 回测策略，包括事件发生后买入时机、卖出时机、持仓仓位等信息
         :param event_model: 预测购买股票的模型，包括
@@ -58,7 +57,7 @@ class EventBtEngine(metaclass=MetaEventEngine):
     def set_model(self, model):
         self.model = model
 
-    def run_back_test(self):
+    def run_back_test(self, mode):
         """
         1、获取购买日字典
         2、基于模型选定回测开始终止日期
@@ -69,9 +68,10 @@ class EventBtEngine(metaclass=MetaEventEngine):
 
         :return:
         """
-        buy_signal_dict = self.trade_strategy.get_buy_signal_dict(self.event_dataframe)
+        original_factors = self.extract(self.event_dataframe)
+        buy_signal_dict = self.trade_strategy.get_buy_signal_dict(self.event_dataframe,self.)
         rtn_dataframe = self.trade_strategy.get_rtn_data(buy_signal_dict)
-        original_factors = self.extract(buy_signal_dict)
+
         model = self.model_class(buy_signal_dict, original_factors, rtn_dataframe)
         final_rtn = model.get_optimal_list()
         return final_rtn

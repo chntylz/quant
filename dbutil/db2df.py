@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 
 from util import tunshare
 
-engine = create_engine('mysql+pymysql://root:myh123@localhost:3306/quant?charset=utf8', pool_recycle=1)
+engine = create_engine('mysql+pymysql://root:myh123@localhost:3307/quant?charset=utf8', pool_recycle=1)
 pro = tunshare.get_pro()
 
 
@@ -64,10 +64,10 @@ def update_k_data(from_date=None, end_date=None):
         trade_date_sql = 'select trade_date from quant.stock_daily order by trade_date desc limit 1'
         result = pd.read_sql(trade_date_sql, engine)
         from_date = result.trade_date.values[0]
-    from_date = datetime.datetime.strptime(from_date, '%Y%m%d')
+    # from_date = datetime.datetime.strptime(from_date, '%Y%m%d')
 
     if end_date is None:
-        end_date = datetime.datetime.now()
+        end_date = datetime.datetime.now().date()
     else:
         end_date = datetime.strptime(end_date, '%Y%m%d')
     while from_date < end_date:
@@ -170,9 +170,9 @@ def update_forecast(from_date=None, end_date=None):
 
 def update_db():
     update_suspend_d()
-    update_k_data()
-    update_basic()
-    update_forecast()
+    # update_k_data()
+    # update_basic()
+    # update_forecast()
 
 
 def get_forecast_to_yeji(from_date, end_date):

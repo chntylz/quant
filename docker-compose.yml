@@ -1,0 +1,20 @@
+# Use root/example as user/password credentials
+version: '3.1'
+
+services:
+
+  db:
+    image: mysql:5.7
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./mydir:/mydir
+      - ./datadir:/var/lib/mysql
+      - ./conf/my.cnf:/etc/my.cnf
+      - /Users/apple/data/docker/mysql/source:/docker-entrypoint-initdb.d
+    restart: always
+    ports:
+      - 3307:3306
+    environment:
+      MYSQL_ROOT_PASSWORD: myh123
+      MYSQL_DATABASE: quant
+      TZ: Asia/Shanghai

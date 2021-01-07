@@ -63,7 +63,7 @@ class FixParamsTradeStrategy(BaseTradeStrategy):
         key = date_list.iloc[0] + '--' + date_list.iloc[-1] + '--' + str(head)
         return date_list, key
 
-    def get_buy_signal_dict(self, event_df):
+    def get_buy_signal_dict(self, event_df, factors=None):
         """
         :return: 购买日：购买股票list的dict
         """

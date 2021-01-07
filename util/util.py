@@ -78,18 +78,16 @@ def fit_standard(x):
     return x_std, scaler
 
 
-def IC(x, re, num=50):
+def IC(x, re, num=25):
     IC = []
     if not (np.sum(np.logical_and(~np.isnan(x), ~np.isnan(re))) > num):
+
         return None
     ind = np.where(np.logical_and(~np.isnan(x), ~np.isnan(re)))[0]
     x = x[ind]
     re = re[ind]
-    try:
-        IC.append(stats.spearmanr(x, re, nan_policy='omit')[0])
-    except RuntimeWarning as w:
-        print(w)
-        pass
+    IC.append(stats.spearmanr(x, re, nan_policy='omit')[0])
+
     return IC
 
 
