@@ -35,7 +35,7 @@ def get_extend_factors_name() -> list:
     global engine
     sql = "show columns from quant.stock_factor"
     df = pd.read_sql(sql, engine)
-    return df.Field.iloc[2:].to_list()
+    return df.Field.iloc[2:].to_list()[:-1]
 
 
 def get_extend_factor(ts_code, tradedate):

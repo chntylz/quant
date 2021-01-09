@@ -21,7 +21,7 @@ from util import tunshare as tn
 from util import util
 
 
-# logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.INFO)
 
 
 def trade_date_cac(base_date, days, calendar, *args):
@@ -101,8 +101,8 @@ def trade_date_cac(base_date, days, calendar, *args):
             if sell_date.is_open.values[0] == 1:
                 count_l += 1
 
-    buy_date_str = datetime.datetime.strptime(buy_date.cal_date.values[0], '%Y%m%d').strftime('%Y-%m-%d').__str__()
-    sell_date_str = datetime.datetime.strptime(sell_date.cal_date.values[0], '%Y%m%d').strftime('%Y-%m-%d').__str__()
+    buy_date_str = datetime.datetime.strptime(buy_date.cal_date.values[0], '%Y%m%d').strftime('%Y-%m-%d')
+    sell_date_str = datetime.datetime.strptime(sell_date.cal_date.values[0], '%Y%m%d').strftime('%Y-%m-%d')
 
     return True, buy_date_str, sell_date_str
 
@@ -362,9 +362,9 @@ def find_buy_day(ts_code, ndate, head, calendar):
     if dtfm is None or len(dtfm) == 0:
         return False, trade_date
     start_info = dtfm.iloc[0, :]
-    can_buy = check_start_day(start_info)
-    if not can_buy:
-        return False, trade_date
+    # can_buy = check_start_day(start_info)
+    # if not can_buy:
+    #     return False, trade_date
     buy_signal_cache.set_buy_day(key, trade_date)
     return True, trade_date
 
@@ -474,8 +474,8 @@ def get_nextday_factor(yeji_next_day, result, *args):
     scores_df = pd.DataFrame(
         columns=scores_df_column)
     ndate_dict = {}
-
-    factor_weights, pca, scaler = calc_dynamic_factor(result, IC_range=range_l, IC_step=step, IC_times=times)
+    result_optimal = result[result.out_date < tran_dateformat(trade_today).sort_values(by=['in_date', 'out_date'])]
+    factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_l, IC_step=step, IC_times=times)
     result_optimal = result[result.out_date < end_date].sort_values(by=['in_date', 'out_date'])
     for index, std_factor in yeji_next_day.iterrows():
         ndate = std_factor.ndate
@@ -908,13 +908,21 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
     for buy_ts_info in buy_list:
 
         hold_days = tail - head
+
         """寻找卖出日"""
         can_sell, sell_date, dtfm, buyday_info, sellday_info = find_sell_day(buy_ts_info[1], buy_date, hold_days,
                                                                              calender)
         """对于无法卖出的资产，仓位会一直占用至结束日"""
         if not can_sell and is_real == 1:
-            available, positions_df = calc_position(tran_dateformat(buy_date), tran_dateformat(end_date),
+            if check_start_day(dtfm.iloc[0]):
+                available, positions_df = calc_position(tran_dateformat(buy_date), tran_dateformat(end_date),
                                                     per_ts_pos, positions_df)
+            else:
+                count += 1
+                result_trade.loc[count] = [0.0, 0.0, 0.0, 0.0, buy_date, sell_date, buy_ts_info[1],
+                                           buy_ts_info[0], 0.0, 0, 2, '预增', np.nan, np.nan, np.nan,
+                                           np.nan,
+                                           np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan]
             continue
         elif not can_sell:
             continue
@@ -925,8 +933,8 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         #                                         positions_df)
         # if not available:
         #     continue
-        result_cache = result_store[(result_store.pub_date == buy_ts_info[0]) & (result_store.code == buy_ts_info[1])]
-
+        result_cache = result_store[(result_store.pub_date == buy_ts_info[0]) & (result_store.code == buy_ts_info[1]) &
+                                    (result_store.in_date == buy_date) & (result_store.out_date == sell_date)]
         if len(result_cache) > 0:
             forecasttype = result_cache.forecasttype.values[0]
             pure_rtn = result_cache.pure_rtn.values[0]
@@ -1335,6 +1343,12 @@ def extract_factors(ts_code, start, end, ndate):
         print('industry ', ts_code)
         industry = 1000
         pass
+    _, buy_day = find_buy_day(ts_code, ndate, 0, calender)
+    df_buy = get_dt_data(ts_code, buy_day.replace('-', '', 2), buy_day.replace('-', '', 2))
+    if len(df_buy) == 1:
+        open_change = (df_buy.open.values[0] - df_buy.pre_close.values[0]) / df_buy.pre_close.values[0]
+    else:
+        open_change = 0.0
     beta_df = dp_all[(dp_all.trade_date >= start.replace('-', '', 2)) & (
             dp_all.trade_date <= end.replace('-', '', 2))]
     beta0 = (beta_df.iloc[0].close - beta_df.iloc[1].close) / beta_df.iloc[1].close
@@ -1644,8 +1658,10 @@ def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=T
             IC_times -= 1
     return std_features, scaler, pca
 
+IC_total = None
 
 def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
+    global IC_total
     length_data = len(history_data)
     if length_data < 22:
         return None, None, None
@@ -1661,6 +1677,10 @@ def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
         IC_df, pca, scaler = calc_factors(history_data, IC_times, IC_range, IC_step)
     else:
         IC_df, pca, scaler = calc_factors(history_data)
+    if IC_total is None:
+        IC_total = IC_df.iloc[:, 1:-1]
+    else:
+        IC_total = IC_total.append(IC_df.iloc[:, 1:-1])
 
     return select_factor(IC_df), pca, scaler
 
@@ -1693,8 +1713,8 @@ def calc_factors(result_factor, times=None, period=40, step=5):
     #     print(e)
 
     """从最大日期倒退计算Factors IC"""
-
-    while start_date2 > result_factor.iloc[0, 5] and ((times is None) or (times > 0)):
+    """start_date2:最近的发布日"""
+    while start_date2 > result_factor.iloc[0, 7] and ((times is None) or (times > 0)):
         """end_date = 后推90日"""
         end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 3), '%Y%m%d') - datetime.timedelta(
             days=period)).strftime('%Y%m%d').__str__()
@@ -1708,8 +1728,6 @@ def calc_factors(result_factor, times=None, period=40, step=5):
             # start_date2 = (datetime.datetime.strptime(start_date2, '%Y%m%d') - datetime.timedelta(
             #     days=step)).strftime('%Y%m%d').__str__()
             continue
-
-        # print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
         # result_temp = get_factors(result_temp)
         result_temp_nona = result_temp[IC_factors[:-1]].dropna()
 
@@ -1722,13 +1740,12 @@ def calc_factors(result_factor, times=None, period=40, step=5):
             columns = IC_factors
             iic = util.IC(std_feature[:, i], std_feature[:, 0])
             if iic is None:
-                IC_df.loc[start_date2, columns[i]] = None
+                IC_df.loc[start_date2+':'+end_date2, columns[i]] = None
                 continue
-            IC_df.loc[start_date2, columns[i]] = iic[0]
-            # print('%s IC is:%s' % (columins[i], iic))
-        IC_df.loc[start_date2, 'count'] = len(std_feature)
-        start_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
-            days=step)).strftime('%Y%m%d').__str__()
+            IC_df.loc[start_date2+':'+end_date2, columns[i]] = iic[0]
+        IC_df.loc[start_date2+':'+end_date2, 'count'] = len(std_feature)
+        start_date2 = (datetime.datetime.strptime(start_date2, '%Y-%m-%d') - datetime.timedelta(
+            days=step)).strftime('%Y-%m-%d')
         if times is not None:
             times -= 1
     return IC_df, pca, scaler
@@ -1937,7 +1954,7 @@ def trade_test(yeji_l, positions, ratio_i1, range_j1, residual_k1, step_l1, time
     times = times + times_l1
     result_local, positions_dataframe_local = trade(yeji_l, positions / 100, pred_head, pred_tail, calender, dp_all)
     result_local['optimal'] = 0
-    save_param(result_local)
+    save_param(result_local.dropna(subset=factors_list))
     t_rtn = 0
     for i, item in enumerate(select_list):
         length_days = (datetime.datetime.strptime(
