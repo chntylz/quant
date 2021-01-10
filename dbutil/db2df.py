@@ -43,6 +43,10 @@ def get_extend_factor(ts_code, tradedate):
     sql = "SELECT * FROM quant.stock_factor where ts_code ='" + ts_code + "' and trade_date = '" + tradedate + "'"
     return pd.read_sql(sql, engine)
 
+def get_extend_factor_date(startdate, enddate):
+    global engine
+    sql = "SELECT * FROM quant.stock_factor where trade_date between '" + startdate + "' and '" + enddate + "' order by trade_date"
+    return pd.read_sql(sql, engine).iloc[:,:-1]
 
 def get_k_data_period(start, end):
     global engine
