@@ -311,7 +311,7 @@ def get_dt_data(code, start, end):
     end = tran_dateformat(end.replace('-', '', 3))
     dt = dt_data[(dt_data['ts_code'] == code) & (dt_data['start_to_end'] == (start + end))]
     if len(dt) == 0:
-        dt = get_k_data(code, start.replace('-', '', 3), end.replace('-', '', 3))
+        dt = get_k_data(code, start, end)
         if dt is None:
             return dt
         if len(dt) == 0:
@@ -328,7 +328,7 @@ def check_new(ts_code, trade_date):
     if new_stock_info is not None and len(new_stock_info) != 0:  # 16~20年新股
         if new_stock_info.issue_date.values[0] == '':  # 尚未明确发行日
             return False, trade_date
-        if new_stock_info.issue_date.values[0] > trade_date.replace('-', '', 3):
+        if new_stock_info.issue_date.values[0] > trade_date.replace('-', '', 2):
             ## TODO:: 后续考虑是否放开非发行日发布预测公告的新股，暂时关闭
             return False, trade_date
             # trade_date = new_stock_info.issue_date.values[0]
@@ -470,7 +470,7 @@ def get_nextday_factor(yeji_next_day, result, *args):
     range_l = args[1]
     residual_l = args[2]
     factors_today = pd.DataFrame(columns=factors_list)
-    scores_df_column = ['score', 'ndate', 'today']
+    scores_df_column = ['score', 'ndate', 'today','in_date','out_date', 'pure_rtn']
     scores_df = pd.DataFrame(
         columns=scores_df_column)
     ndate_dict = {}
@@ -502,7 +502,11 @@ def get_nextday_factor(yeji_next_day, result, *args):
     print(std_factors)
     for index, std_factor in std_factors.iterrows():
         scores = (factor_weights * std_factor[factors_list]).sum()
-        scores_df.loc[index] = [scores, ndate_dict.get(index), std_factor.today]
+        if std_factor.today > 0:
+            scores_df.loc[index] = [scores, ndate_dict.get(index), std_factor.today, np.nan, np.nan, np.nan]
+        else:
+            df = result[(result.code == index)].iloc[-1]
+            scores_df.loc[index] = [scores, df.pub_date, std_factor.today, df.in_date, df.out_date, df.pure_rtn]
 
     buy_num = int(residual_l + (len(scores_df) / ratio_l))
 
@@ -912,6 +916,8 @@ def calc_one_day_returns(is_real, per_ts_pos, buy_list, buy_date, head, tail, re
         """寻找卖出日"""
         can_sell, sell_date, dtfm, buyday_info, sellday_info = find_sell_day(buy_ts_info[1], buy_date, hold_days,
                                                                              calender)
+
+
         """对于无法卖出的资产，仓位会一直占用至结束日"""
         if not can_sell and is_real == 1:
             if check_start_day(dtfm.iloc[0]):
@@ -1041,6 +1047,7 @@ def select_factor(IC_dataframe):
     try:
         IC_factor = IC_dataframe.drop(columns=['pure_rtn', 'count'])
     except KeyError as e:
+        IC_factor = IC_dataframe.drop(columns=['pure_rtn'])
         print(e)
         pass
     IC_factor = IC_factor.dropna(how='all')
@@ -1670,8 +1677,7 @@ def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
     start_ndate = sort_data.iloc[0, :].pub_date
     end_ndate = sort_data.iloc[-1, :].pub_date
     length_days = (datetime.datetime.strptime(
-        tran_dateformat(end_ndate), '%Y-%m-%d') - datetime.datetime.strptime(tran_dateformat(start_ndate),
-                                                                             '%Y-%m-%d')).days
+        end_ndate, '%Y-%m-%d') - datetime.datetime.strptime(start_ndate, '%Y-%m-%d')).days
     if length_days >= IC_range + IC_step * IC_times:
         # print(f'calc_factor-ic_range:{IC_range}')
         IC_df, pca, scaler = calc_factors(history_data, IC_times, IC_range, IC_step)
@@ -1685,23 +1691,96 @@ def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
     return select_factor(IC_df), pca, scaler
 
 
-def calc_factors(result_factor, times=None, period=40, step=5):
+# def calc_factors(result_factor, times=None, period=40, step=5):
+#     IC_factors = ['pure_rtn']
+#     IC_factors.extend(factors_list)
+#     IC_factors.append('count')
+#     IC_df = pd.DataFrame(columns=IC_factors)
+#
+#     start_date2 = result_factor['out_date'].iloc[-1]
+#     pca = PCA(n_components=14)
+#     if times is None:
+#         begin_date = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
+#             days=period)).strftime('%Y%m%d').__str__()
+#     else:
+#         begin_date = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
+#             days=period + times * step + 1)).strftime('%Y%m%d').__str__()
+#     result_pca = result_factor[
+#         (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
+#                 result_factor['pub_date'] > tran_dateformat(begin_date))].copy()
+#     result_pca = result_pca.dropna(subset=factors_list)
+#     if len(result_pca) == 0:
+#         return IC_df, pca, None
+#     std_features, scaler = util.standard(result_pca[IC_factors[1:-1]].to_numpy(), scaler=None,
+#                                          y=result_pca[0:1].to_numpy())
+#     # try:
+#     #     pca.fit_transform(std_features)
+#     # except ValueError as e:
+#     #     print(e)
+#
+#     """从最大日期倒退计算Factors IC"""
+#
+#     while start_date2 > result_factor.iloc[0, 5] and ((times is None) or (times > 0)):
+#         """end_date = 后推90日"""
+#         end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 3), '%Y%m%d') - datetime.timedelta(
+#             days=period)).strftime('%Y%m%d').__str__()
+#
+#         result_temp = result_factor[
+#             (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
+#                     result_factor['pub_date'] > tran_dateformat(end_date2))].copy()
+#
+#         if len(result_temp) < 28:
+#             start_date2 = end_date2
+#             # start_date2 = (datetime.datetime.strptime(start_date2, '%Y%m%d') - datetime.timedelta(
+#             #     days=step)).strftime('%Y%m%d').__str__()
+#             continue
+#
+#         # print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
+#         # result_temp = get_factors(result_temp)
+#         result_temp_nona = result_temp[IC_factors[:-1]].dropna()
+#         if len(result_temp_nona) == 0:
+#             continue
+#         std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
+#
+#         # std_feature = pca.transform(std_feature1)
+#         std_feature = np.hstack((result_temp_nona.iloc[:, 0].to_numpy().reshape(len(result_temp_nona), 1), std_feature))
+#
+#         for i in range(1, std_feature.shape[1]):
+#             columns = IC_factors
+#             iic = util.IC(std_feature[:, i], std_feature[:, 0], 25)
+#             if iic is None:
+#                 IC_df.loc[start_date2, columns[i]] = None
+#                 continue
+#             IC_df.loc[start_date2, columns[i]] = iic[0]
+#             # print('%s IC is:%s' % (columins[i], iic))
+#         IC_df.loc[start_date2, 'count'] = len(std_feature)
+#         start_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
+#             days=step)).strftime('%Y%m%d').__str__()
+#         if times is not None:
+#             times -= 1
+#     return IC_df, pca, scaler
+
+def calc_factors(result_factor, times=None, period=12, step=5):
     IC_factors = ['pure_rtn']
     IC_factors.extend(factors_list)
-    IC_factors.append('count')
     IC_df = pd.DataFrame(columns=IC_factors)
 
-    start_date2 = result_factor['out_date'].iloc[-1]
-    pca = PCA(n_components=14)
+    start_date2 = result_factor['pub_date'].iloc[-1]
+    pca = PCA(n_components=20)
     if times is None:
-        begin_date = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
-            days=period)).strftime('%Y%m%d').__str__()
+        begin_date = (datetime.datetime.strptime(start_date2, '%Y-%m-%d') - datetime.timedelta(
+            days=period)).strftime('%Y-%m-%d')
     else:
-        begin_date = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
-            days=period + times * step + 1)).strftime('%Y%m%d').__str__()
+        begin_date = (datetime.datetime.strptime(start_date2, '%Y-%m-%d') - datetime.timedelta(
+            days=period + times*step + 1)).strftime('%Y-%m-%d').__str__()
     result_pca = result_factor[
-        (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
-                result_factor['pub_date'] > tran_dateformat(begin_date))].copy()
+        (result_factor['pub_date'] <= start_date2) & (
+                result_factor['pub_date'] > begin_date)].copy()
+    # if use_extend_factor:
+    #     _, result_extend = get_extend_factor(result_pca)
+    #     # IC_factors.extend(extend_factor_list)
+    IC_factors.append('count')
+
     result_pca = result_pca.dropna(subset=factors_list)
     if len(result_pca) == 0:
         return IC_df, pca, None
@@ -1716,29 +1795,44 @@ def calc_factors(result_factor, times=None, period=40, step=5):
     """start_date2:最近的发布日"""
     while start_date2 > result_factor.iloc[0, 7] and ((times is None) or (times > 0)):
         """end_date = 后推90日"""
-        end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 3), '%Y%m%d') - datetime.timedelta(
-            days=period)).strftime('%Y%m%d').__str__()
+        end_date2 = (datetime.datetime.strptime(start_date2, '%Y-%m-%d') - datetime.timedelta(
+            days=period)).strftime('%Y-%m-%d')
 
         result_temp = result_factor[
-            (result_factor['pub_date'] <= tran_dateformat(start_date2)) & (
-                    result_factor['pub_date'] > tran_dateformat(end_date2))].copy()
+            (result_factor['pub_date'] <= start_date2) & (
+                    result_factor['pub_date'] > end_date2)].copy()
 
-        if len(result_temp) < 28:
+        if len(result_temp) < 32:
             start_date2 = end_date2
             # start_date2 = (datetime.datetime.strptime(start_date2, '%Y%m%d') - datetime.timedelta(
             #     days=step)).strftime('%Y%m%d').__str__()
             continue
         # result_temp = get_factors(result_temp)
         result_temp_nona = result_temp[IC_factors[:-1]].dropna()
-
-        std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
+        if len(result_temp_nona) == 0:
+            start_date2 = end_date2
+            continue
+        try:
+            std_feature, scaler_curr = util.standard(result_temp_nona.iloc[:, 1:].to_numpy(), scaler)
+        except RuntimeWarning as w:
+            print(columns[i], w)
+            start_date2 = end_date2
+            continue
+            pass
 
         # std_feature = pca.transform(std_feature1)
         std_feature = np.hstack((result_temp_nona.iloc[:, 0].to_numpy().reshape(len(result_temp_nona), 1), std_feature))
 
         for i in range(1, std_feature.shape[1]):
             columns = IC_factors
-            iic = util.IC(std_feature[:, i], std_feature[:, 0])
+            if std_feature[0, i] == std_feature[-1, i]:
+                is_equal = True
+                for j, item in enumerate(std_feature[1:-1, i]):
+                    if item != std_feature[0, i]:
+                        is_equal = False
+                if is_equal:
+                    continue
+            iic = util.IC(std_feature[:, i], std_feature[:, 0], 25)
             if iic is None:
                 IC_df.loc[start_date2+':'+end_date2, columns[i]] = None
                 continue
@@ -1778,11 +1872,12 @@ def update_stock_info():
                                   fields='ts_code,symbol,name,area,industry,market,list_status, list_date,delist_date')
     stock_info2 = pro.stock_basic(exchange='', list_status='P',
                                   fields='ts_code,symbol,name,area,industry,market,list_status, list_date,delist_date')
+
     stock_infomation = stock_infomation.append(stock_info1)
     stock_infomation = stock_infomation.append(stock_info2)
+    stock_infomation = stock_infomation.append(stock_info)
     stock_infomation['industry_code'] = pd.factorize(stock_infomation['industry'])[0].astype(np.uint16)
-
-
+    stock_infomation.drop_duplicates(subset=['ts_code'], inplace=True)
     stock_infomation.to_csv('./data/stock_basic_info.csv', index=False)
 
 
@@ -2017,6 +2112,7 @@ def describe_result(result_l, positions_dataframe_l, ratio_local, range_local, r
     print('最大回撤:', max_draw_down)
     print('Sharpe率:', sharpe_ratio(net_date_value - 1))
     print(f'SQN Score:{sqn_score}')
+    draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio_local)
 
     return net_date_value, total_net_date_value_b, total_net_date_value, total_rtn, average_positions, max_draw_down, \
            sharp, ratio_local, range_local, residual_local
@@ -2077,15 +2173,15 @@ if __name__ == '__main__':
 
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
-    start_date = '20100308'  ## 计算起始日
-    end_date = '20210104'  ## 计算截止日
+    start_date = '20200104'  ## 计算起始日
+    end_date = '20210108'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20201231'  ## 当日
-    tomorrow = '20210104'
+    trade_today = '20210107'  ## 当日
+    tomorrow = '20210108'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji.csv', False)
+    yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji1.csv', False)
 
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])

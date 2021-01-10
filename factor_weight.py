@@ -18,6 +18,14 @@ factor_list = ['factor0', 'factor1', 'factor2', 'factor3', 'factor4', 'factor5',
 # 输入因子dataframe、未来n天收益率dataframe，开始日期、结束日期，返回IC序列
 # 这段代码的结果已经存入IC_all，也就是这段代码是用来算因子IC值的
 def get_IC(factor, re_future, startdate, enddate):
+    """
+
+    :param factor: 因子暴露，预处理过的因子原始值
+    :param re_future: 持有n日后的收益
+    :param startdate: 计算N期IC的开始日期
+    :param enddate: 计算N期IC的结束日期
+    :return: pd.Series, start到end期间的每日IC值
+    """
     factor = factor.apply(pd.to_numeric, errors='ignore').loc[startdate:enddate]
     IC = []
     datelist = re_future.loc[startdate:enddate].index.tolist()
@@ -135,10 +143,18 @@ def get_weight_simple(IC_all, factor_list, IC_length, period, weight_way, halfli
     ind_valid = np.where(~np.isnan(IC_use.sum(axis=1, skipna=False).values))[0]  # 所有因子都有ic值的行index
     IC_use = IC_use.iloc[ind_valid]
     IC_mean = IC_use.mean(axis=0).values.reshape(IC_use.shape[1], 1)
+    if IC_use.shape[0] <= 0:
+        return None
     if weight_way == 'ICIR_Ledoit':
         lw = LedoitWolf()
         IC_sig = lw.fit(IC_use.values).covariance_
-        weight = np.dot(np.linalg.inv(IC_sig), IC_mean)
+
+        try:
+            weight = np.dot(np.linalg.inv(IC_sig), IC_mean)
+        except np.linalg.LinAlgError as e:
+            print(e, '不存在逆矩阵')
+            weight = np.zeros([len(IC_mean), 1])
+            pass
 
     elif weight_way == 'ICIR_sigma':
         IC_sig = np.cov(IC_use.values, rowvar=False)
