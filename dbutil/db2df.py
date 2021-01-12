@@ -43,6 +43,16 @@ def get_extend_factor(ts_code, tradedate):
     sql = "SELECT * FROM quant.stock_factor where ts_code ='" + ts_code + "' and trade_date = '" + tradedate + "'"
     return pd.read_sql(sql, engine)
 
+def get_stock_size(trade_date):
+    global engine
+    sql = f"select sb.ts_code, sb.circ_mv from stock_basic sb where trade_date = '{trade_date}'"
+    return pd.read_sql(sql,engine)
+
+
+def get_industry_stock(industry_id):
+    global engine
+    sql = f'select '
+
 def get_extend_factor_date(startdate, enddate):
     global engine
     sql = "SELECT * FROM quant.stock_factor where trade_date between '" + startdate + "' and '" + enddate + "' order by trade_date"

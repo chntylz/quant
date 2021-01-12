@@ -206,13 +206,13 @@ def get_weight_simple(IC_all, factor_list, IC_length, period, weight_way, halfli
 # length为回看周期，period为因子与收益率间隔天数，interval为做回归的间隔天数
 def get_weight_reg_date(Factor_dict, date, re, length, period, interval, reg_type='ols'):
     num_ = 0
-    factor_list = list(Factor_dict.values())
-    weight_mean = np.array([0.0] * len(factor_list))
+    factor_data_list = list(Factor_dict.values())
+    weight_mean = np.array([0.0] * len(factor_data_list))
 
     for ind in range(length, period - 1, -interval):
-        factor_flatten = factor_list[0].loc[:date].iloc[-ind].values.flatten()
-        for i in range(1, len(factor_list)):
-            factor_flatten = np.c_[factor_flatten, factor_list[i].loc[:date].iloc[-ind].values.flatten()]
+        factor_flatten = factor_data_list[0].loc[:date].iloc[-ind].values.flatten()
+        for i in range(1, len(factor_data_list)):
+            factor_flatten = np.c_[factor_flatten, factor_data_list[i].loc[:date].iloc[-ind].values.flatten()]
 
         factor_flatten = pd.DataFrame(factor_flatten)
         y = re.loc[:date].iloc[-ind + period].values.flatten()
