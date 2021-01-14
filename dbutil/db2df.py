@@ -185,7 +185,7 @@ def update_forecast(from_date=None, end_date=None):
 def update_db():
     update_suspend_d()
     # update_k_data()
-    # update_basic()
+    # update_basic('20210108')
     # update_forecast()
 
 

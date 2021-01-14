@@ -11,9 +11,6 @@ from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
 
 
-
-
-
 def candle(stock: pd.DataFrame, code_name, others=None, period=None):
     length = 30
     if period is not None:

@@ -741,7 +741,7 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
     scores_df = pd.DataFrame(
         columns=scores_df_column)
     """从历史记录中筛选"""
-    result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    result_optimal = result_l[result_l.out_date < buy_date].sort_values(by=['in_date', 'out_date'])
     """根据历史记录，动态计算因子权重,更新因子暴露值"""
     factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_ic, IC_step=step, IC_times=times)
 
@@ -2173,11 +2173,11 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20200104'  ## 计算起始日
-    end_date = '20210112'  ## 计算截止日
+    end_date = '20210115'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 16)
     print(str(start_date_list))
-    trade_today = '20210111'  ## 当日
-    tomorrow = '20210112'
+    trade_today = '20210114'  ## 当日
+    tomorrow = '20210115'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji1.csv', True)
@@ -2270,7 +2270,7 @@ if __name__ == '__main__':
         optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, 5, 12, 0)
         optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
         print('明日购买股票列表为:', optimal_list)
-        print('评分为：', scores_df.sort_values('score'))
+        print('评分为：', scores_df.sort_values('score', ascending=False).iloc[:, :4])
     for index, row in result.iterrows():
         result.loc[index, 'intime'] = get_intime(row)
         result.loc[index, 'update_num'] = get_update_num(row)

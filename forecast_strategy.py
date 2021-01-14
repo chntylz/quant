@@ -481,7 +481,7 @@ def get_nextday_factor(yeji_next_day, result, *args):
         columns=scores_df_column)
     ndate_dict = {}
     result_optimal = result[result.out_date < tran_dateformat(end_date)].sort_values(by=['in_date', 'out_date'])
-    factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_l, IC_step=step, IC_times=times)
+    result_optimal, valid_factors = preprocess_factor(result_optimal)
     for index, std_factor in yeji_next_day.iterrows():
         ndate = std_factor.ndate
         ts_code = std_factor.instrument[0:9]
@@ -496,15 +496,24 @@ def get_nextday_factor(yeji_next_day, result, *args):
         if factors is None:
             continue
         factors_today.loc[ts_code] = factors
-    if factor_weights is None or len(factor_weights) == 0:
-        return [], factors_today
-    logging.info(f'{ndate}-选出的权重为{len(factor_weights)}个因子:{factor_weights.to_string()}')
+    if len(valid_factors) == 0:
+        return [], factors_today, None
     factors_today_nona = pd.DataFrame()
     for idx, column in enumerate(factors_today.columns.to_list()):
-        p = sum(factors_today.iloc[:, idx].isnull()) / len(factors_today.iloc[:, idx])
-        if p < 0.1:
-            factors_today_nona[idx] = factors_today.iloc[:, idx].fillna(np.mean(factors_today.iloc[:, idx]))
+        if column in valid_factors:
+            p = sum(factors_today.iloc[:, idx].isnull()) / len(factors_today.iloc[:, idx])
+            if p < 0.15:
+                factors_today_nona[idx] = factors_today.iloc[:, idx].fillna(np.mean(factors_today.iloc[:, idx]))
+    if len(factors_today_nona.columns) < 12:
+        return [], factors_today, None
     factors_today_nona.columns = factors_today.columns[factors_today_nona.columns]
+    new_result_column = result_optimal.iloc[:, :12].columns.to_list()
+    new_result_column.extend(factors_today_nona.columns.to_list())
+    factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_l, IC_step=step, IC_times=times)
+    if factor_weights is None or len(factor_weights) == 0:
+        return [], factors_today, None
+    logging.info(f'{ndate}-选出的权重为{len(factor_weights)}个因子:{factor_weights.to_string()}')
+
     if len(factors_today_nona) < ratio_l:
         pointer = len(factors_today_nona) - ratio_l
         result_padding = get_padding(result_optimal, pointer * -1)
@@ -539,7 +548,7 @@ def get_padding(result_optimal, length_padding):
     stop_date = datetime.datetime.strptime(result_optimal.iloc[0].in_date, '%Y-%m-%d')
     while begin_date > stop_date:
         result_pad = result_optimal[result_optimal.in_date >= begin_date.strftime('%Y-%m-%d')].dropna(
-            subset=factors_list)
+            subset=result_optimal.iloc[:, 12:].columns)
         if len(result_pad) == length_padding:
             return result_pad
         elif len(result_pad) > length_padding:
@@ -565,7 +574,7 @@ def get_optimal_list_ml1(today_buy_candidate_list, result_l, buy_date, *args):
     scores_df = pd.DataFrame(
         columns=scores_df_column)
     factors_today = pd.DataFrame(columns=factors_list)
-    result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    result_optimal = result_l[result_l.out_date < buy_date].sort_values(by=['in_date', 'out_date'])
     # XY_train = result_optimal[IC_factors].dropna()
 
     std_XY_train, Y_train, scaler, pca = get_std_factor(result_optimal, range_ic, step, times, need_std)
@@ -645,7 +654,7 @@ def get_optimal_list_ml(today_buy_candidate_list, result_l, buy_date, *args):
     min_test_date = 2
     exist, base_date, test_start_date = trade_date_cac(buy_date, -min_test_date, calender)
 
-    result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    result_optimal = result_l[result_l.out_date < buy_date].sort_values(by=['in_date', 'out_date'])
     result_test = result_optimal[
         (result_optimal.in_date < buy_date) & (result_optimal.in_date >= test_start_date)].dropna()
 
@@ -756,10 +765,11 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
     factors_today = pd.DataFrame(columns=factors_list)
     scores_df = pd.DataFrame(
         columns=scores_df_column)
+    result_nona, valid_factors = preprocess_factor(result_l.copy())
     """从历史记录中筛选"""
-    result_optimal = result_l[result_l.out_date < buy_date.replace('-', '', 2)].sort_values(by=['in_date', 'out_date'])
+    result_optimal = result_nona[result_nona.out_date < buy_date].sort_values(by=['in_date', 'out_date'])
     """根据历史记录，动态计算因子权重,更新因子暴露值"""
-    factor_weights, pca, scaler = calc_dynamic_factor(result_optimal, IC_range=range_ic, IC_step=step, IC_times=times)
+
     # print(f"{buy_date}:facotor weight is:{factor_weights}")
     ndate_dict = {}
     # if factor_weights is None:
@@ -779,7 +789,7 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
         else:
             base_date = trade_date_cac(ndate, pred_head - 1, calender, -1)
             start_date1 = trade_date_cac(ndate, pred_head - 5, calender, -1)  # 周
-            start_date2 = trade_date_cac(ndate, pred_head - 22, calender, -1)  # 月
+            # start_date2 = trade_date_cac(ndate, pred_head - 22, calender, -1)  # 月
             if start_date1[2] is None or base_date[2] is None:
                 continue
             factors = extract_factors(ts_code=ts_code, start=start_date1[2].replace('-', '', 3),
@@ -791,21 +801,29 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
             if factors is None:
                 continue
             factors_today.loc[ts_code] = factors
-
+    if len(valid_factors) == 0 or len(result_optimal) == 0:
+        return [], factors_today
+    factors_today_nona = pd.DataFrame()
+    for idx, column in enumerate(factors_today.columns.to_list()):
+        if column in valid_factors:
+            p = sum(factors_today.iloc[:, idx].isnull()) / len(factors_today.iloc[:, idx])
+            if p < 0.1:
+                factors_today_nona[idx] = factors_today.iloc[:, idx].fillna(np.mean(factors_today.iloc[:, idx]))
+    if len(factors_today_nona.columns) < 12:
+        return [], factors_today
+    factors_today_nona.columns = factors_today.columns[factors_today_nona.columns]
+    new_result_column = result_optimal.iloc[:, :12].columns.to_list()
+    new_result_column.extend(factors_today_nona.columns.to_list())
+    factor_weights, pca, scaler = calc_dynamic_factor(result_optimal[new_result_column], IC_range=range_ic, IC_step=step,
+                                                      IC_times=times)
     if factor_weights is None or len(factor_weights) == 0:
         return [], factors_today
     logging.info(f'{ndate}-选出的权重为{len(factor_weights)}个因子:{factor_weights.to_string()}')
-    factors_today_nona = pd.DataFrame()
-    for idx, column in enumerate(factors_today.columns.to_list()):
-        p = sum(factors_today.iloc[:, idx].isnull()) / len(factors_today.iloc[:, idx])
-        if p < 0.1:
-            factors_today_nona[idx] = factors_today.iloc[:, idx].fillna(np.mean(factors_today.iloc[:, idx]))
-    factors_today_nona.columns = factors_today.columns[factors_today_nona.columns]
 
     if len(factors_today_nona) < ratio:
         pointer = len(factors_today_nona) - ratio
 
-        result_padding = get_padding(result_optimal, pointer * -1)
+        result_padding = get_padding(result_optimal[new_result_column], pointer * -1)
         std_factors = get_std_factors(factors_today_nona, result_padding, pca, scaler)
     else:
         empty_result = pd.DataFrame()
@@ -1663,7 +1681,7 @@ def get_his_factor(history_data, IC_range=22, IC_step=5, IC_times=10, need_std=T
     # pca.fit_transform(std_feature_all)
 
     end_date2 = (datetime.datetime.strptime(start_date2.replace('-', '', 2), '%Y%m%d') - datetime.timedelta(
-        days=IC_range)).strftime('%Y%m%d').__str__()
+        days=IC_range)).strftime('%Y-%m-%d').__str__()
     """从最大日期倒退计算Factors IC"""
     while end_date2 > history_data.iloc[0, 5] and ((IC_times is None) or (IC_times > 0)):
         """end_date = 后推90日"""
@@ -1707,11 +1725,11 @@ def calc_dynamic_factor(history_data, IC_range=40, IC_step=5, IC_times=10):
                                                             '%Y-%m-%d')).days
     if length_days >= IC_range + IC_step * IC_times:
         # print(f'calc_factor-ic_range:{IC_range}')
-        IC_df, pca, scaler = calc_factors(history_data, IC_times, IC_range, IC_step)
+        IC_df, pca, scaler = calc_factors(sort_data, IC_times, IC_range, IC_step)
     else:
-        IC_df, pca, scaler = calc_factors(history_data)
+        IC_df, pca, scaler = calc_factors(sort_data)
 
-    return select_factor(IC_df, history_data, IC_range, IC_step, IC_times), pca, scaler
+    return select_factor(IC_df, sort_data, IC_range, IC_step, IC_times), pca, scaler
 
 
 def get_extend_factor(result_pca):
@@ -1751,11 +1769,11 @@ def calc_factors(result_factor, times=None, period=40, step=5):
     #     # IC_factors.extend(extend_factor_list)
     IC_factors.append('count')
 
-    result_pca = result_pca.dropna(subset=factors_list)
-    if len(result_pca) == 0:
+
+    # result_pca = result_pca.dropna(subset=factors_list)
+    if len(result_pca) == 0 or len(result_pca.columns) <= 12:
         return IC_df, pca, None
-    std_features, scaler = util.standard(result_pca[IC_factors[1:-1]].to_numpy(), scaler=None,
-                                         y=result_pca[0:1].to_numpy())
+    std_features, scaler = util.standard(result_pca.iloc[:, 12:].to_numpy(), scaler=None)
     # try:
     #     pca.fit_transform(std_features)
     # except ValueError as e:
@@ -1780,7 +1798,7 @@ def calc_factors(result_factor, times=None, period=40, step=5):
 
         # print(f'length {start_date2}-{end_date2}: {len(result_temp)}')
         # result_temp = get_factors(result_temp)
-        result_temp_nona = result_temp[IC_factors[:-1]].dropna()
+        result_temp_nona = result_temp.iloc[:, 12:].dropna()
         if len(result_temp_nona) == 0:
             start_date2 = end_date2
             continue
@@ -1817,12 +1835,29 @@ def calc_factors(result_factor, times=None, period=40, step=5):
     return IC_df, pca, scaler
 
 
-def compare_plt(result_compare, label):
-    net_date_value_compare = (result_compare.groupby('out_date').net_rtn.agg('sum') + 100) / 100
-    total_net_date_value_compare = net_date_value_compare.cumprod()
-    plt.plot(pd.DatetimeIndex(total_net_date_value_compare.index.astype(str)), total_net_date_value_compare.values,
-             label=label,
-             color='#FF0000')
+def preprocess_factor(result_l):
+    result_nonan = pd.DataFrame()
+    result_l.dropna(axis=0,  thresh=40, subset=result_l.iloc[:, 12:].columns, inplace=True)
+    if result_l is None or len(result_l) == 0:
+        return result_l, result_l.columns.to_list()
+    for idx, column in enumerate(result_l.columns):
+        if column not in factors_list:
+            result_nonan[idx] = result_l.iloc[:, idx]
+            continue
+        p = sum(result_l.iloc[:, idx].isnull()) / len(result_l.iloc[:, idx])
+        if p < 0.01:
+            result_nonan[idx] = result_l.iloc[:, idx].fillna(np.mean(result_l.iloc[:, idx]))
+    result_nonan.columns = result_l.columns[result_nonan.columns]
+    valid_factor = list(set(factors_list).intersection(set(result_nonan.columns.to_list())))
+    return result_nonan, valid_factor
+
+
+# def compare_plt(result_compare, label):
+#     net_date_value_compare = (result_compare.groupby('out_date').net_rtn.agg('sum') + 100) / 100
+#     total_net_date_value_compare = net_date_value_compare.cumprod()
+#     plt.plot(pd.DatetimeIndex(total_net_date_value_compare.index.astype(str)), total_net_date_value_compare.values,
+#              label=label,
+#              color='#FF0000')
 
 
 def update_dp():
@@ -1893,10 +1928,9 @@ def get_calender(start, end='20201231'):
 def draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ratio):
     plt.ylabel("Return")
     plt.xlabel("Time")
-    plt.rcParams['figure.figsize'] = (15.0, 6.0)
-    plt.rcParams['savefig.dpi'] = 300  # 图片像素
-    plt.rcParams['figure.dpi'] = 300  # 分辨率
-    plt.rcParams['figure.figsize'] = (15.0, 6.0)
+    plt.rcParams['savefig.dpi'] = 150  # 图片像素
+    plt.rcParams['figure.dpi'] = 150  # 分辨率
+    plt.rcParams['figure.figsize'] = (12.0, 6.0)
     title = 'fc::sharpe:' + str(sharpe_ratio(net_date_value - 1))
     title = title + ' ' + 'maxdrawn:' + str(MaxDrawdown(total_net_date_value_b)) + '\n'
     title = title + ' ' + 'selectrate:' + str(ratio)
@@ -1905,7 +1939,7 @@ def draw_figure(net_date_value, total_net_date_value_b, total_net_date_value, ra
         100 * (total_net_date_value[-1] - 1)) + '%'
     plt.title(title, fontsize=8)
     plt.grid()
-    plt.plot(pd.DatetimeIndex(total_net_date_value.index), total_net_date_value.values)
+    plt.plot(pd.DatetimeIndex(total_net_date_value_b.index), total_net_date_value_b.values)
     plt.setp(plt.gca().get_xticklabels(), rotation=50)
     # result4 = read_result('./data/result1620-10-11factors.csv')
     # result4 = result4[50:]
@@ -1994,7 +2028,7 @@ def init_param():
     residual = 0
     count = 0
     step = 5
-    times = 15
+    times = 12
     seed = np.random.seed()
     buy_signal_cache.load_cache('./data/buysignal.csv')
     result_columns = read_result('./data/result_store2.csv').columns.to_list()
@@ -2009,7 +2043,8 @@ def save_param(result_local):
     buy_signal_cache.save_cache('./data/buysignal.csv')
     result_save = result_local.drop(columns=['optimal']).append(result_store)
     result_save = result_save.append(result_store)
-    result_save.drop_duplicates(subset=['code', 'pub_date', 'in_date'], keep=False, inplace=True)
+    result_save.drop_duplicates(subset=['code', 'pub_date', 'in_date', 'out_date'], inplace=True)
+    result_store.dropna(axis=0, subset=factors_list, thresh=40, inplace=True)
     result_save.to_csv('./data/result_store_ext.csv', index=False, header=0, mode='a')
     # result_save.to_csv('./data/result_store_ext.csv', index=False)
 
@@ -2154,15 +2189,15 @@ if __name__ == '__main__':
     """20160101~20180505, 20190617~2020824, 20180115~20191231"""
 
     start_date = '20190104'  ## 计算起始日
-    end_date = '20210112'  ## 计算截止日
+    end_date = '20210113'  ## 计算截止日
     start_date_list = generate_start_date_list('20190901', '20190918', 7)
     print(str(start_date_list))
-    trade_today = '20210111'  ## 当日
-    tomorrow = '20210112'
+    trade_today = '20210112'  ## 当日
+    tomorrow = '20210113'
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     # yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
-    yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji2.csv', False)
+    yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji2.csv', init=False)
     yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
     # yeji = yeji.drop(columns=['intime'])
 
@@ -2250,7 +2285,7 @@ if __name__ == '__main__':
 
     if len(yeji_today):
         optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, ratio, range_ic, 0)
-        optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
+        # optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
         print('明日购买股票列表为:', optimal_list)
         print('评分为：', scores_df.sort_values('score'))
     for index, row in result.iterrows():

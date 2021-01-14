@@ -18,10 +18,17 @@ if __name__ == '__main__':
                     ['2020-10-28', '002475.SZ'], ['2020-10-28', '002940.SZ'], ['2020-10-28', '002414.SZ'],
                     ['2020-10-28', '603392.SH'], ['2020-10-29', '002244.SZ'], ['2020-10-30', '002612.SZ'],
                     ['2020-10-30', '002165.SZ'], ['2020-10-30', '002409.SZ'], ['2020-10-30', '600026.SH'],
-                    ['2020-10-31', '600428.SH']]
+                    ['2020-10-31', '600428.SH'],
+                    ['2020-12-23', '002384.SZ'],
+                    ['2020-12-29', '002314.SZ'],
+                    ['2021-01-04', '300748.SZ'],
+                    ['2021-01-09', '603100.SH'],
+                    ['2021-01-11', '300363.SZ'], ['2021-01-11', '300740.SZ'], ['2021-01-11', '688513.SH'],
+                    ['2021-01-12', '300824.SZ'], ['2021-01-12', '300680.SZ'], ['2021-01-12', '603330.SH'],
+                    ['2021-01-14', '603982.SH'], ['2021-01-14', '603229.SH'], ['2021-01-14', '603105.SH']]
     buy_df = pd.DataFrame(data=myh_buy_list, columns=['pub_date', 'code', ])
 
-    result = pd.read_csv('../data/result_store1.csv', converters={'pub_date': str, 'out_date': str, 'in_date': str})
+    result = pd.read_csv('../data/result14.csv', converters={'pub_date': str, 'out_date': str, 'in_date': str})
     backtrace_df = pd.DataFrame(columns=['pub_date', 'code', 'in_date', 'out_date', 'rtn', 'zz500rtn', 'pure_rtn'])
 
     for index, item in buy_df.iterrows():
@@ -54,9 +61,9 @@ if __name__ == '__main__':
     plt.plot(pd.to_datetime(mean_rtn.index), mean_rtn.pure_rtn * 100, label='avg_pure_rtn')
     plt.legend()
     plt.show()
-    plt.plot(pd.to_datetime(mean_rtn.index), mean_rtn.sum_pure_rtn * 100, label='sum pure rtn')
+    plt.plot(pd.to_datetime(mean_rtn.index), mean_rtn.sum_pure_rtn * 100, label='casum pure rtn')
     plt.plot(pd.to_datetime(zz_500_df.trade_date), zz_500_df.sum_500rtn * 100, label='500 rtn')
     plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_rtn * 100, label='sum rtn')
-    plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_pure_rtn * 100, label='sum pure rtn')
+    plt.plot(pd.to_datetime(sum_rtn.index), sum_rtn.sum_pure_rtn * 100, label='casum sum pure rtn')
     plt.legend()
     plt.show()
