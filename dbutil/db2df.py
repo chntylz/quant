@@ -41,6 +41,11 @@ def get_extend_factors_name() -> list:
 def get_extend_factor(ts_code, tradedate):
     global engine
     sql = "SELECT * FROM quant.stock_factor where ts_code ='" + ts_code + "' and trade_date = '" + tradedate + "'"
+    return pd.read_sql(sql, engine).iloc[:,:-1]
+
+def get_sw_industry():
+    global engine
+    sql = f"select industry_id from sw_industry where level = 1 and industry_id > '010000'"
     return pd.read_sql(sql, engine)
 
 def get_stock_size(trade_date):
