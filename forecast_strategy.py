@@ -830,7 +830,8 @@ def get_optimal_list(today_buy_candidate_list, result_l, buy_date):
         std_factors = get_std_factors(factors_today_nona, empty_result, pca, scaler)
 
     for index, item in std_factors.iterrows():
-        scores = (factor_weights * item[factor_weights.index]).sum()
+        valid_std_factors_index = list(set(item.index.to_list()).intersection(set(factor_weights.index.to_list())))
+        scores = (factor_weights * item[valid_std_factors_index]).sum()
         scores_df.loc[index] = [scores, ndate_dict.get(index), item.today]
 
     buy_num = int(residual + (len(scores_df) / ratio))
@@ -2171,91 +2172,87 @@ def get_update_num(row):
 
 
 buy_signal_cache = BuySignalCache()
+pred_tail = 1  # 公告发布日后pred_tail日收盘价卖出
+pred_head = 0  # 公告发布日后pred_head日开盘价买入
+pro = tn.get_pro()
+ratio = 5
+count = 0
+range_ic = 12
+step = 5
+times = 12
+residual = 0
+seed = None
+factors_list.extend(extend_factor_list)
+# result_store = read_result('./data/result_store_ext.csv')
+sum_support = np.zeros(len(factors_list))
+sum_support_week = np.zeros(len(factors_list))
+"""20160101~20180505, 20190617~2020824, 20180115~20191231"""
+
+start_date = '20190104'  ## 计算起始日
+end_date = '20210105'  ## 计算截止日
+start_date_list = generate_start_date_list('20190901', '20190918', 12)
+print(str(start_date_list))
+trade_today = '20210104'  ## 当日
+tomorrow = '20210105'
+# yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
+# yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
+yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji.csv', False)
+yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
+# yeji = yeji.drop(columns=['intime'])
+calender = get_calender(start_date, end_date)
+dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str}).sort_values('trade_date')
+positions = 80  # 预留20%仓位
+pos_rtn = pd.DataFrame(
+    columns=['range_ic', 'ratio', 'residual', 'step', 'times', 'total_rtn', 'compound_total_rtn', 'rtn_year',
+             'average_pos',
+             'max_draw_down',
+             'sharpe_ratio', 'SQN'])
+results = []
+index_array = []
+yeji_array = []
+start_dates = []
+des_result_array = []
 
 if __name__ == '__main__':
-    ratio = 5
-    count = 0
-    range_ic = 12
-    step = 5
-    times = 15
-    residual = 0
-    seed = np.random.seed()
-    factors_list.extend(extend_factor_list)
-    buy_signal_cache = BuySignalCache()
-    # result_store = read_result('./data/result_store_ext.csv')
-    sum_support = np.zeros(len(factors_list))
-    sum_support_week = np.zeros(len(factors_list))
-
-    """20160101~20180505, 20190617~2020824, 20180115~20191231"""
-
-    start_date = '20190104'  ## 计算起始日
-    end_date = '20210113'  ## 计算截止日
-    start_date_list = generate_start_date_list('20190901', '20190918', 7)
-    print(str(start_date_list))
-    trade_today = '20210112'  ## 当日
-    tomorrow = '20210113'
-
-    # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
-    # yeji_all = tl_data_utl.get_all_tl_yeji_data('./data/tl_yeji.csv', False)
-    yeji_all = tl_data_utl.get_tl_data(start_date, end_date, './data/tl_yeji2.csv', init=False)
-    yeji = yeji_all[(yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]
-    # yeji = yeji.drop(columns=['intime'])
-
-    pred_tail = 1  # 公告发布日后pred_tail日收盘价卖出
-    pred_head = 0  # 公告发布日后pred_head日开盘价买入
-    pro = tn.get_pro()
-    calender = get_calender(start_date, end_date)
     update_data()
     dp_all = pd.read_csv('./data/dpzz500.csv', converters={'trade_date': str}).sort_values('trade_date')
-    positions = 80  # 预留20%仓位
-    pos_rtn = pd.DataFrame(
-        columns=['range_ic', 'ratio', 'residual', 'step', 'times', 'total_rtn', 'compound_total_rtn', 'rtn_year',
-                 'average_pos',
-                 'max_draw_down',
-                 'sharpe_ratio', 'SQN'])
-    results = []
-    index_array = []
-    yeji_array = []
-    start_dates = []
-    des_result_array = []
-    # with multiprocessing.Pool(processes=5) as pool:
-    #     for li, date in enumerate(start_date_list):
-    #         # yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
-    #         yeji_array.append([yeji_all, yeji_all[
-    #             (yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]])
-    #         for i in range(0, 1, 1):  # ratio
-    #             for j in range(0, 1, 1):  # range
-    #                 for k in range(0, 10, 10):  # residual*10
-    #                     for l in range(0, 1, 1):  # step
-    #                         for m in range(0, 15, 3):  # times
-    #                             ratio_i = i
-    #                             range_j = j
-    #                             residual_k = k * 0.1
-    #                             step_l = l
-    #                             times_m = m
-    #                             index_dict = {'ratio': ratio_i, 'range_ic': range_j, 'residual': residual_k,
-    #                                           'step': step_l,
-    #                                           'times': times_m}
-    #                             index_array.append(index_dict)
-    #                             start_dates.append(date)
-    #                             result_tuple = pool.apply_async(func=trade_test, args=(
-    #                                 yeji_array[li][1], positions, ratio_i, range_j, residual_k, step_l, times_m))
-    #                             results.append(result_tuple)
-    #
-    #     for n, d in enumerate(results):
-    #         result, positions_dataframe = d.get()
-    #         index_dict = index_array[n]
-    #         start_date_i = start_dates[n]
-    #         des_result_tuple = describe_result(result, positions_dataframe, index_dict['ratio'], index_dict['range_ic'],
-    #                                            index_dict['residual'], index_dict['step'], index_dict['times'],
-    #                                            start_date_i)
-    #         des_result_array.append(des_result_tuple)
+    with multiprocessing.Pool(processes=6) as pool:
+        for li, date in enumerate(start_date_list):
+            # yeji_array.append(create_forecast_df(date, trade_today, end_date, stock_info, True))
+            yeji_array.append([yeji_all, yeji_all[
+                (yeji_all.ndate > tran_dateformat(start_date)) & (yeji_all.ndate <= tran_dateformat(trade_today))]])
+            for i in range(0, 1, 1):  # ratio
+                for j in range(0, 1, 1):  # range
+                    for k in range(0, 10, 10):  # residual*10
+                        for l in range(0, 1, 1):  # step
+                            for m in range(0, 30, 2):  # times
+                                ratio_i = i
+                                range_j = j
+                                residual_k = k * 0.1
+                                step_l = l
+                                times_m = m
+                                index_dict = {'ratio': ratio_i, 'range_ic': range_j, 'residual': residual_k, 'step': step_l,
+                                              'times': times_m}
+                                index_array.append(index_dict)
+                                start_dates.append(date)
+                                result_tuple = pool.apply_async(func=trade_test, args=(
+                                    yeji_array[li][1], positions, ratio_i, range_j, residual_k, step_l, times_m))
+                                results.append(result_tuple)
 
-    for i in range(1):
-        result, positions_dataframe = trade_test(yeji, positions, 0, 0, 0, 0)
-        results.append(result)
-        des_result_tuple = describe_result(result, positions_dataframe, 0, 0, 0, 0, 0, start_date)
-        des_result_array.append(des_result_tuple)
+        for n, d in enumerate(results):
+            result, positions_dataframe = d.get()
+            index_dict = index_array[n]
+            start_date_i = start_dates[n]
+            des_result_tuple = describe_result(result, positions_dataframe, index_dict['ratio'], index_dict['range_ic'],
+                                               index_dict['residual'], index_dict['step'], index_dict['times'],
+                                               start_date_i)
+            des_result_array.append(des_result_tuple)
+
+    # for i in range(1):
+    #     result, positions_dataframe = trade_test(yeji, positions, 0, 0, 0, 0)
+    #     results.append(result)
+    #     des_result_tuple = describe_result(result, positions_dataframe, 0, 0, 0, 0, 0, start_date)
+    #     des_result_array.append(des_result_tuple)
 
     fe = pd.Series(index=factors_list, data=sum_support)
     fe_week = pd.Series(index=factors_list, data=sum_support_week)
@@ -2272,11 +2269,11 @@ if __name__ == '__main__':
 
     sharp_array = []
     save_datas()
-
-    for item in des_result_array:
-        sharp_array.append(item[6])
-    logging.warning(msg=f'平均sharp:{np.mean(sharp_array)}, 最大值:{np.max(sharp_array)}, 最小值{np.min(sharp_array)}')
-    logging.warning(msg=f'sharp标准差:{np.std(sharp_array)}')
+    #
+    # for item in des_result_array:
+    #     sharp_array.append(item[6])
+    # logging.warning(msg=f'平均sharp:{np.mean(sharp_array)}, 最大值:{np.max(sharp_array)}, 最小值{np.min(sharp_array)}')
+    # logging.warning(msg=f'sharp标准差:{np.std(sharp_array)}')
 
     # yeji_all, yeji = create_forecast_df(start_date, trade_today, end_date, stock_info, True)
     yeji_today = yeji_all[
@@ -2284,8 +2281,8 @@ if __name__ == '__main__':
     yeji_today = yeji_today[yeji_today['forecasttype'].isin(['预增', 22])]
 
     if len(yeji_today):
-        optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, ratio, range_ic, 0)
-        # optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
+        optimal_list, factors_today, scores_df = get_nextday_factor(yeji_today, result, 5, 12, 0)
+        optimal_list1 = get_nextday_factor_ml(yeji_today, result, 5, 22, 0)
         print('明日购买股票列表为:', optimal_list)
         print('评分为：', scores_df.sort_values('score'))
     for index, row in result.iterrows():
